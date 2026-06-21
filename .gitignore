@@ -1,0 +1,29 @@
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
+.env.local
+
+# JWT development secret
+backend/.dev_jwt_secret
+
+# Uploads
+backend/uploads/
+
+# Node
+node_modules/
+
+# Build folders
+dist/
+build/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AYMO Notebook - Settings Preview</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+    :root{--bg:#fff;--panel:#fff;--soft:#f6f6f6;--text:#111;--muted:#666;--border:#ddd}
+    *{box-sizing:border-box}body{margin:0;font-family:Inter,sans-serif;background:var(--bg);color:var(--text)}
+    .dark{--bg:#0f0f0f;--panel:#171717;--soft:#1f1f1f;--text:#f5f5f5;--muted:#b7b7b7;--border:#313131}
+    .wrap{min-height:100vh;padding:20px;background:var(--bg);color:var(--text)}
+    .home{display:grid;grid-template-columns:240px 1fr;gap:18px}.sidebar,.main,.card{border:1px solid var(--border);border-radius:16px;background:var(--panel)}
+    .sidebar{padding:16px}.logo h1{margin:0}.logo p{margin:4px 0 16px;font-size:12px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+    .btn{border:1px solid var(--border);background:var(--panel);color:var(--text);border-radius:10px;padding:9px 12px;cursor:pointer}
+    .btn.black{background:var(--text);color:var(--bg);border-color:var(--text)}
+    .main{padding:18px}.head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}.ey{margin:0;color:var(--muted);font-size:12px;text-transform:uppercase}
+    .head h2{margin:4px 0 0;font-size:30px}.search{width:100%;padding:11px 12px;border:1px solid var(--border);background:var(--soft);color:var(--text);border-radius:10px;margin-bottom:12px}
+    .note{border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--panel);margin-bottom:10px}
+    .settings{max-width:960px;margin:0 auto}.settings-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+    .settings-body{border:1px solid var(--border);border-radius:16px;background:var(--panel);padding:8px 16px}
+    .section{padding:16px 0;border-bottom:1px solid var(--border)}.section:last-child{border-bottom:0}.section h3{margin:0 0 12px}
+    .row{display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .switch{width:48px;height:28px;border-radius:999px;border:1px solid var(--border);background:var(--soft);padding:2px;cursor:pointer}
+    .thumb{width:22px;height:22px;border-radius:50%;background:var(--text);display:block;transition:transform .2s ease}.switch.on .thumb{transform:translateX(20px)}
+    select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--soft);color:var(--text)}
+    .acc{display:flex;justify-content:space-between;margin-bottom:10px}.acc span{color:var(--muted)}
+    @media(max-width:1024px){.home{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<div id="app" class="wrap"></div>
+<script>
+let dark=false,view='home',lang='English';
+const notes=['Neuroscience Reading Notes','Product Redesign Kickoff','Voice UI Patterns'];
+const app=document.getElementById('app');
+function render(){
+  app.className='wrap'+(dark?' dark':'');
+  if(view==='settings') return renderSettings();
+  app.innerHTML=`<section class="home"><aside class="sidebar"><div class="logo"><h1>AYMO</h1><p>Notebook</p></div><button class="btn" id="settingsBtn">Settings</button><button class="btn" id="themeBtn" style="margin-top:8px">${dark?'Light':'Dark'}</button></aside><section class="main"><div class="head"><div><p class="ey">AYMO Notebook</p><h2>My Notes</h2></div><button class="btn black">Create Note</button></div><input class="search" placeholder="Search notes" /><div>${notes.map(n=>`<div class="note">${n}</div>`).join('')}</div></section></section>`;
+  document.getElementById('settingsBtn').onclick=()=>{view='settings';render();};
+  document.getElementById('themeBtn').onclick=()=>{dark=!dark;render();};
+}
+function renderSettings(){
+  app.innerHTML=`<section class="settings"><header class="settings-head"><div class="logo"><h1>AYMO</h1><p>Notebook</p><h2 style="margin:6px 0 0;font-size:30px">Settings</h2></div><button class="btn" id="backBtn">Back</button></header><div class="settings-body"><div class="section"><h3>Theme</h3><div class="row"><span>Dark mode</span><button class="switch ${dark?'on':''}" id="toggle"><span class="thumb"></span></button></div></div><div class="section"><h3>Language</h3><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:8px">Preferred language</label><select id="lang"><option>English</option><option>Arabic</option><option>French</option><option>Spanish</option><option>German</option></select></div><div class="section"><h3>Account</h3><div class="acc"><span>Name</span><strong>Aya Morgan</strong></div><div class="acc"><span>Email</span><strong>aya@aymo.app</strong></div><button class="btn" id="logout">Logout</button></div></div></section>`;
+  document.getElementById('lang').value=lang;
+  document.getElementById('toggle').onclick=()=>{dark=!dark;render();};
+  document.getElementById('lang').onchange=(e)=>{lang=e.target.value;};
+  document.getElementById('logout').onclick=()=>alert('Signed out successfully.');
+  document.getElementById('backBtn').onclick=()=>{view='home';render();};
+}
+render();
+</script>
+</body>
+</html>

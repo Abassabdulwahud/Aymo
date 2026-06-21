@@ -1,0 +1,8 @@
+Invoke-RestMethod : Impossible de se connecter au serveur distant
+Au caractère Ligne:2 : 536
++ ... Json; try { Invoke-RestMethod -Uri 'http://127.0.0.1:8011/auth/regist ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [Invoke-RestMethod], WebException
+    + FullyQualifiedErrorId : System.Net.WebException,Microsoft.PowerShell.Commands.InvokeRestMethodCommand
+ 
+

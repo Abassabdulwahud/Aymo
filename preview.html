@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AYMO Notebook - Note Page Preview</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@400;500;600&display=swap");
+    :root { --bg:#fff; --panel:#fff; --soft:#f4f4f4; --text:#111; --muted:#666; --border:#d7d7d7; --inv:#111; --invtext:#fff; }
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,Poppins,sans-serif;background:var(--bg);color:var(--text)}
+    .app{min-height:100vh;padding:24px;background:var(--bg);color:var(--text)}
+    .dark{--bg:#090909;--panel:#111;--soft:#1a1a1a;--text:#f5f5f5;--muted:#ababab;--border:#2c2c2c;--inv:#f5f5f5;--invtext:#101010}
+    .top{display:flex;justify-content:space-between;gap:12px;margin-bottom:16px}.ey{margin:0 0 4px;text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:var(--muted)}
+    h1{margin:0;font-size:32px}.actions{display:flex;gap:10px}.btn{border:1px solid var(--border);background:var(--panel);color:var(--text);padding:10px 14px;border-radius:10px;cursor:pointer}
+    .solid{background:var(--inv);color:var(--invtext);border-color:var(--inv)}
+    .toggle{margin-bottom:16px}
+    .grid{display:grid;gap:16px;grid-template-columns:minmax(0,2fr) minmax(0,1.2fr)}
+    .panel{border:1px solid var(--border);border-radius:16px;background:var(--panel);padding:16px}
+    .lbl{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
+    input,textarea{width:100%;border:1px solid var(--border);background:var(--soft);color:var(--text);padding:12px;border-radius:10px;font-family:inherit;font-size:15px}
+    input{margin-bottom:14px} textarea{min-height:340px;resize:vertical;line-height:1.65}
+    .record{display:flex;gap:10px;align-items:center;margin-top:14px}.hint{margin:0;color:var(--muted);font-size:13px}
+    .uhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.uhead h2{margin:0;font-size:20px}
+    .drop{display:block;border:1px dashed var(--border);border-radius:12px;padding:22px;background:var(--soft);text-align:center;margin-bottom:14px;cursor:pointer}
+    .drop input{display:none}.drop p{margin:0 0 4px;font-weight:500}.drop span{font-size:13px;color:var(--muted)}
+    .files{display:grid;gap:10px}.card{display:grid;grid-template-columns:48px 1fr;gap:10px;border:1px solid var(--border);border-radius:12px;padding:10px}
+    .icon{width:48px;height:48px;display:grid;place-items:center;border:1px solid var(--border);border-radius:10px;background:var(--soft);font-weight:600}
+    .name{margin:0;font-weight:500}.sub{margin:4px 0 0;color:var(--muted);font-size:12px}
+    .ai{margin-top:16px;border:1px solid var(--border);border-radius:16px;padding:16px;background:var(--panel)}
+    .aih{display:flex;justify-content:space-between;align-items:flex-start}.ail{margin:0 0 3px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+    .aih h2{margin:0;font-size:21px}.ins{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}.ic{border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--soft)}
+    .ic h3{margin:0 0 6px;font-size:14px}.ic p{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
+    @media(max-width:1024px){.grid{grid-template-columns:1fr}.ins{grid-template-columns:1fr}textarea{min-height:260px}}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module">
+    import React, { useMemo, useState } from 'https://esm.sh/react@18.3.1';
+    import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
+
+    const mockUploads=[
+      {id:'1',name:'cognitive-load.pdf',kind:'PDF',size:'2.4 MB',time:'2h ago'},
+      {id:'2',name:'lecture-week-3.mp4',kind:'VID',size:'84 MB',time:'1h ago'},
+      {id:'3',name:'memory-research-link',kind:'URL',size:'URL',time:'30m ago'},
+      {id:'4',name:'interview-audio.m4a',kind:'AUD',size:'17 MB',time:'10m ago'},
+    ];
+
+    function App(){
+      const [dark,setDark]=useState(false);
+      const [title,setTitle]=useState('Neuroscience Reading Notes');
+      const [body,setBody]=useState('Attention is selective resource allocation.\\n\\n- Novelty helps retention, but too much hurts memory.\\n- Retrieval practice beats passive review.');
+      const [recording,setRecording]=useState(false);
+      const [uploads,setUploads]=useState(mockUploads);
+      const [collapsed,setCollapsed]=useState(false);
+
+      const insights=useMemo(()=>{
+        const words=body.trim().split(/\\s+/).filter(Boolean).length;
+        return [
+          {title:'Live Summary',detail:`This note has about ${words} words and ${uploads.length} uploads.`},
+          {title:'Comprehension Signal',detail:'Your structure mixes concepts and actions, which improves understanding.'},
+          {title:'Learning Tip',detail:'After each upload, add a 3-line recap in your own words.'},
+        ];
+      },[body,uploads]);
+
+      const onRecord=()=>{
+        if(!recording){setRecording(true);return;}
+        setRecording(false);
+        setBody(v=>`${v}\\n\\nVoice note: Spaced repetition works best right before forgetting starts.`);
+      };
+
+      const onFiles=(e)=>{
+        const files=[...(e.target.files||[])].map((f,i)=>({id:Date.now()+"-"+i,name:f.name,kind:'DOC',size:Math.max(1,Math.round(f.size/1024))+' KB',time:'Just now'}));
+        setUploads(v=>[...files,...v]);
+      };
+
+      return React.createElement('div',{className:`app ${dark?'dark':''}`},[
+        React.createElement('header',{className:'top',key:'h'},[
+          React.createElement('div',{key:'l'},[
+            React.createElement('p',{className:'ey',key:'e'},'AYMO Notebook'),
+            React.createElement('h1',{key:'t'},'Note Page')
+          ]),
+          React.createElement('div',{className:'actions',key:'a'},[
+            React.createElement('button',{className:'btn',key:'s1',onClick:()=>alert('Share link copied (mock).')},'Share'),
+            React.createElement('button',{className:'btn solid',key:'s2',onClick:()=>alert('Note saved.')},'Save')
+          ])
+        ]),
+        React.createElement('button',{className:'btn toggle',key:'tg',onClick:()=>setDark(v=>!v)},dark?'Switch to Light':'Switch to Dark'),
+        React.createElement('main',{className:'grid',key:'m'},[
+          React.createElement('section',{className:'panel',key:'w'},[
+            React.createElement('label',{className:'lbl',key:'l1'},'Title'),
+            React.createElement('input',{key:'i',value:title,onChange:e=>setTitle(e.target.value)}),
+            React.createElement('label',{className:'lbl',key:'l2'},'Writing Space'),
+            React.createElement('textarea',{key:'ta',value:body,onChange:e=>setBody(e.target.value)}),
+            React.createElement('div',{className:'record',key:'r'},[
+              React.createElement('button',{className:`btn ${recording?'solid':''}`,key:'rb',onClick:onRecord},recording?'Stop Recording':'Record Voice'),
+              React.createElement('p',{className:'hint',key:'rh'},recording?'Listening... speech will be transcribed into the editor.':'Tap record to convert your voice into text.')
+            ])
+          ]),
+          React.createElement('section',{className:'panel',key:'u'},[
+            React.createElement('div',{className:'uhead',key:'uh'},[
+              React.createElement('h2',{key:'ut'},'Uploads'),
+              React.createElement('button',{className:'btn',key:'al',onClick:()=>alert('Add Link action (mock).')},'Add Link')
+            ]),
+            React.createElement('label',{className:'drop',key:'d'},[
+              React.createElement('input',{type:'file',multiple:true,key:'fi',onChange:onFiles}),
+              React.createElement('p',{key:'dp'},'Drag and drop files here, or click to browse.'),
+              React.createElement('span',{key:'ds'},'Supports PDFs, documents, videos, and audio files.')
+            ]),
+            React.createElement('div',{className:'files',key:'fg'},uploads.map(f=>React.createElement('article',{className:'card',key:f.id},[
+              React.createElement('div',{className:'icon',key:'ic'},f.kind),
+              React.createElement('div',{key:'fm'},[
+                React.createElement('p',{className:'name',key:'n'},f.name),
+                React.createElement('p',{className:'sub',key:'s'},`${f.size} · Added ${f.time}`)
+              ])
+            ])))
+          ])
+        ]),
+        React.createElement('section',{className:'ai',key:'ai'},[
+          React.createElement('div',{className:'aih',key:'ah'},[
+            React.createElement('div',{key:'ti'},[
+              React.createElement('p',{className:'ail',key:'al'},'AI Assistant'),
+              React.createElement('h2',{key:'at'},'Insights & Learning Tips')
+            ]),
+            React.createElement('button',{className:'btn',key:'cb',onClick:()=>setCollapsed(v=>!v)},collapsed?'Expand':'Collapse')
+          ]),
+          !collapsed && React.createElement('div',{className:'ins',key:'in'},insights.map((i,idx)=>React.createElement('article',{className:'ic',key:idx},[
+            React.createElement('h3',{key:'h'},i.title),
+            React.createElement('p',{key:'p'},i.detail)
+          ])))
+        ])
+      ]);
+    }
+
+    createRoot(document.getElementById('root')).render(React.createElement(App));
+  </script>
+</body>
+</html>
