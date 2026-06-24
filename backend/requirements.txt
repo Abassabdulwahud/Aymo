@@ -1,10 +1,21 @@
-fastapi==0.116.1
-uvicorn[standard]==0.33.0
-sqlalchemy==2.0.43
-psycopg2-binary==2.9.9
-python-jose[cryptography]==3.4.0
+# ── Web framework ────────────────────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+alembic==1.14.0
+
+# ── Auth / Security ───────────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+
+# ── Data validation ───────────────────────────────────────────────────────────
 pydantic[email]==2.10.6
-google-auth==2.40.3
-requests==2.32.4
-alembic==1.13.3
+
+# ── HTTP / OAuth ──────────────────────────────────────────────────────────────
+google-auth==2.37.0
+requests==2.32.3

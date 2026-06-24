@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -15,11 +16,17 @@ settings = get_settings()
 
 app = FastAPI(title=settings.app_name)
 
+# Allow localhost in development, plus any origins set via APP_ALLOWED_ORIGINS
+# (comma-separated, e.g. https://aymo-frontend.onrender.com)
+_extra_origins: list[str] = [
+    o.strip()
+    for o in os.getenv("APP_ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "null",
-    ],
+    allow_origins=["null"] + _extra_origins,
     # Allow local dev ports without having to re-patch CORS each time.
     allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$",
     allow_credentials=False,

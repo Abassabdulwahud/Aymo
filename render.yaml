@@ -1,0 +1,36 @@
+services:
+  # ─── FastAPI Backend ──────────────────────────────────────────────────────
+  - type: web
+    name: aymo-backend
+    runtime: python
+    rootDir: backend           # All build/start commands run from here
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    plan: free                 # Change to "starter" or higher for always-on
+
+    envVars:
+      # ── Python version ─────────────────────────────────────────────────────
+      - key: PYTHON_VERSION
+        value: "3.11.11"
+
+      # ── App ────────────────────────────────────────────────────────────────
+      - key: APP_ENV
+        value: production
+
+      # ── CORS: set to your frontend URL after it deploys ───────────────────
+      # - key: APP_ALLOWED_ORIGINS
+      #   value: https://YOUR-FRONTEND.onrender.com
+
+      # ── Database ───────────────────────────────────────────────────────────
+      # Link this to your Render PostgreSQL service, OR paste the connection
+      # string directly in the Render Dashboard → Environment tab.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: aymo-db         # Must match your Render PostgreSQL service name
+          property: connectionString
+
+      # ── Secrets (set manually in Render Dashboard → Environment tab) ───────
+      # - key: JWT_SECRET_KEY
+      #   value: <run: python -c "import secrets; print(secrets.token_urlsafe(48))">
+      # - key: GOOGLE_CLIENT_ID
+      #   value: ...
