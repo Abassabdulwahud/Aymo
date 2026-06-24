@@ -111,7 +111,7 @@ export function AuthPage({
   const [providers, setProviders] = useState<AuthProvidersConfig | null>(null);
   const [googleStatus, setGoogleStatus] = useState<string | null>(null);
   const [appleStatus, setAppleStatus] = useState<string | null>(null);
-  const googleButtonRef = useRef<HTMLDivElement | null>(null);
+  const googleButtonRef = useRef<HTMLDivElement>(null);
   const [resetToken, setResetToken] = useState<string | null>(null);
 
   const submitLabel = mode === "login" ? "Log In" : mode === "signup" ? "Sign Up" : "Reset Password";
@@ -159,7 +159,7 @@ export function AuthPage({
         if (cancelled || !googleButtonRef.current || !window.google?.accounts?.id) return;
         googleButtonRef.current.innerHTML = "";
         window.google.accounts.id.initialize({
-          client_id: googleProvider.clientId,
+          client_id: googleProvider.clientId as string,
           callback: ({ credential }) => {
             if (!credential) {
               setError("Google sign-in did not return a usable identity token.");

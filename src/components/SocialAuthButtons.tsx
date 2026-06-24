@@ -5,7 +5,7 @@ interface SocialAuthButtonsProps {
   onGoogle: () => Promise<void>;
   onApple: () => Promise<void>;
   disabled?: boolean;
-  googleButtonRef: RefObject<HTMLDivElement | null>;
+  googleButtonRef: RefObject<HTMLDivElement>;
   googleEnabled: boolean;
   googleStatus: string | null;
   appleEnabled: boolean;

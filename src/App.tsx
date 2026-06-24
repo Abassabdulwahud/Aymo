@@ -193,8 +193,9 @@ export default function App() {
     mode,
     email,
     password,
+    fullName,
   }: {
-    mode: "login" | "signup";
+    mode: "login" | "signup" | "reset";
     email: string;
     password: string;
     fullName: string;
