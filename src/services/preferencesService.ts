@@ -1,5 +1,10 @@
 import { AIProvider } from "../types";
 
+// Resolve the backend base URL using the same strategy as authService.ts.
+// In production (Vercel → Render), set VITE_API_BASE_URL to the Render service URL.
+// In local dev, falls back to window.location.origin (backend runs on same host or proxied).
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "") || window.location.origin;
+
 const STORAGE_KEY = "aymo.preferences";
 
 export interface UserPreferences {
@@ -12,7 +17,7 @@ interface BackendPreferencesResponse {
 
 export async function loadPreferences(): Promise<UserPreferences> {
   try {
-    const response = await fetch("/api/settings/preferences", { method: "GET" });
+    const response = await fetch(`${API_BASE_URL}/api/settings/preferences`, { method: "GET" });
     if (response.ok) {
       const data = (await response.json()) as BackendPreferencesResponse;
       if (data.aiProvider) {
@@ -31,7 +36,7 @@ export async function saveAIProviderPreference(aiProvider: AIProvider): Promise<
   persistLocal({ aiProvider });
 
   try {
-    await fetch("/api/settings/preferences", {
+    await fetch(`${API_BASE_URL}/api/settings/preferences`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
