@@ -1,5 +1,7 @@
 import os
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
+import traceback
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -15,6 +17,12 @@ from .routes.tags import router as tags_router
 settings = get_settings()
 
 app = FastAPI(title=settings.app_name)
+
+
+@app.exception_handler(Exception)
+async def debug_exception_handler(request, exc):
+    tbl = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return PlainTextResponse(tbl, status_code=500)
 
 # Allow localhost in development, plus any origins set via APP_ALLOWED_ORIGINS
 # (comma-separated, e.g. https://aymo-frontend.onrender.com)
