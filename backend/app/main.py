@@ -267,3 +267,33 @@ def db_verify(email: str, password: str):
         return {"error": str(e)}
 
 
+@app.get("/db-reset-password")
+def db_reset_password(email: str, password: str):
+    """Debug endpoint: reset password for a given user directly in the database."""
+    try:
+        from sqlalchemy import text
+        from .database import engine
+        from .utils.security import hash_password
+
+        hashed = hash_password(password)
+        with engine.begin() as conn:
+            # Update password_hash
+            res = conn.execute(
+                text("UPDATE users SET password_hash = :h WHERE email = :e"),
+                {"h": hashed, "e": email.lower()}
+            )
+            # Also ensure provider is email
+            conn.execute(
+                text("UPDATE users SET provider = 'email' WHERE email = :e"),
+                {"e": email.lower()}
+            )
+        return {
+            "status": "success",
+            "email": email,
+            "updated_rows": res.rowcount
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+
