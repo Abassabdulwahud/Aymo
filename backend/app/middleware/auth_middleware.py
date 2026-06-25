@@ -12,6 +12,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         if request.url.path.startswith("/api/protected"):
             auth_header = request.headers.get("Authorization", "")
             if not auth_header.startswith("Bearer "):
