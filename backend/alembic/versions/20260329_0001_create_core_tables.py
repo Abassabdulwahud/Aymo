@@ -25,9 +25,18 @@ file_type_enum = sa.Enum("pdf", "video", "audio", "document", "link", name="file
 
 def upgrade() -> None:
     bind = op.get_bind()
-    ai_provider_enum.create(bind, checkfirst=True)
-    theme_preference_enum.create(bind, checkfirst=True)
-    file_type_enum.create(bind, checkfirst=True)
+    try:
+        ai_provider_enum.create(bind, checkfirst=True)
+    except Exception:
+        pass
+    try:
+        theme_preference_enum.create(bind, checkfirst=True)
+    except Exception:
+        pass
+    try:
+        file_type_enum.create(bind, checkfirst=True)
+    except Exception:
+        pass
 
     op.create_table(
         "users",
