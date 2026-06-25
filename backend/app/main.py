@@ -210,3 +210,60 @@ def db_user(email: str):
     except Exception as e:
         return {"error": str(e)}
 
+
+@app.get("/db-verify")
+def db_verify(email: str, password: str):
+    """Debug endpoint: check if verify_password succeeds or throws an exception."""
+    try:
+        from sqlalchemy import text
+        from .database import engine
+        from .utils.security import verify_password
+        import traceback
+
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT password_hash FROM users WHERE email = :e"),
+                {"e": email.lower()}
+            ).fetchone()
+        if not row:
+            return {"error": "User not found"}
+        
+        stored_hash = row[0]
+        if not stored_hash:
+            return {"error": "No password hash stored for this user"}
+
+        # Run verify_password
+        result = False
+        verify_exception = None
+        try:
+            import bcrypt
+            # Let's also do a direct checkpw to see if verify_password is catching an exception
+            result = verify_password(password, stored_hash)
+        except Exception as e:
+            verify_exception = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+
+        # Direct bcrypt check
+        direct_result = False
+        direct_exception = None
+        try:
+            import bcrypt
+            direct_result = bcrypt.checkpw(
+                password.encode("utf-8"),
+                stored_hash.encode("utf-8"),
+            )
+        except Exception as e:
+            direct_exception = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+
+        return {
+            "email": email,
+            "verify_password_result": result,
+            "verify_password_exception": verify_exception,
+            "direct_checkpw_result": direct_result,
+            "direct_checkpw_exception": direct_exception,
+            "stored_hash_prefix": stored_hash[:10] if stored_hash else None,
+            "stored_hash_length": len(stored_hash) if stored_hash else 0
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
