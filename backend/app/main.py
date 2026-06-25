@@ -56,3 +56,30 @@ app.mount("/web", StaticFiles(directory=str(project_root)), name="web")
 @app.get("/health")
 def health():
     return {"status": "ok", "environment": settings.app_env}
+
+
+@app.get("/db-inspect")
+def db_inspect():
+    try:
+        from sqlalchemy import inspect, text
+        from .database import engine
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        
+        # Check alembic_version content
+        alembic_version = None
+        if "alembic_version" in tables:
+            with engine.connect() as conn:
+                res = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+                if res:
+                    alembic_version = res[0]
+                    
+        return {
+            "tables": tables,
+            "alembic_version": alembic_version,
+            "database_url_schema": engine.url.drivername,
+            "database_url_host": engine.url.host,
+            "database_url_database": engine.url.database
+        }
+    except Exception as e:
+        return {"error": str(e)}
