@@ -184,3 +184,29 @@ def db_inspect():
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/db-user")
+def db_user(email: str):
+    """Debug endpoint: show password_hash stored for given email."""
+    try:
+        from sqlalchemy import text
+        from .database import engine
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT id, email, password_hash, provider FROM users WHERE email = :e"),
+                {"e": email.lower()}
+            ).fetchone()
+        if not row:
+            return {"found": False}
+        return {
+            "found": True,
+            "id": row[0],
+            "email": row[1],
+            "password_hash_prefix": (row[2] or "")[:10] if row[2] else None,
+            "password_hash_length": len(row[2]) if row[2] else 0,
+            "provider": row[3],
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
