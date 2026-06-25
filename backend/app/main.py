@@ -73,13 +73,23 @@ def health():
 
 @app.get("/db-inspect")
 def db_inspect():
+    migration_error = None
+    migration_success = False
+    try:
+        from alembic.config import Config
+        from alembic import command
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        migration_success = True
+    except Exception as e:
+        migration_error = str(e)
+
     try:
         from sqlalchemy import inspect, text
         from .database import engine
         inspector = inspect(engine)
         tables = inspector.get_table_names()
         
-        # Check alembic_version content
         alembic_version = None
         if "alembic_version" in tables:
             with engine.connect() as conn:
@@ -88,6 +98,8 @@ def db_inspect():
                     alembic_version = res[0]
                     
         return {
+            "migration_success": migration_success,
+            "migration_error": migration_error,
             "tables": tables,
             "alembic_version": alembic_version,
             "database_url_schema": engine.url.drivername,
@@ -95,4 +107,8 @@ def db_inspect():
             "database_url_database": engine.url.database
         }
     except Exception as e:
-        return {"error": str(e)}
+        return {
+            "migration_success": migration_success,
+            "migration_error": migration_error,
+            "error": str(e)
+        }
