@@ -25,18 +25,26 @@ file_type_enum = sa.Enum("pdf", "video", "audio", "document", "link", name="file
 
 def upgrade() -> None:
     bind = op.get_bind()
-    try:
-        ai_provider_enum.create(bind, checkfirst=True)
-    except Exception:
-        pass
-    try:
-        theme_preference_enum.create(bind, checkfirst=True)
-    except Exception:
-        pass
-    try:
-        file_type_enum.create(bind, checkfirst=True)
-    except Exception:
-        pass
+    # Use raw SQL to ensure idempotent enum creation even if the type
+    # already exists from a previously interrupted migration run.
+    bind.execute(sa.text(
+        "DO $$ BEGIN "
+        "  CREATE TYPE ai_provider_enum AS ENUM ('gemini', 'openai', 'deepseek'); "
+        "EXCEPTION WHEN duplicate_object THEN NULL; "
+        "END $$;"
+    ))
+    bind.execute(sa.text(
+        "DO $$ BEGIN "
+        "  CREATE TYPE theme_preference_enum AS ENUM ('light', 'dark'); "
+        "EXCEPTION WHEN duplicate_object THEN NULL; "
+        "END $$;"
+    ))
+    bind.execute(sa.text(
+        "DO $$ BEGIN "
+        "  CREATE TYPE file_type_enum AS ENUM ('pdf', 'video', 'audio', 'document', 'link'); "
+        "EXCEPTION WHEN duplicate_object THEN NULL; "
+        "END $$;"
+    ))
 
     op.create_table(
         "users",
