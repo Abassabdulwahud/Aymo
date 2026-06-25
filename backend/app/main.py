@@ -29,7 +29,7 @@ app.add_middleware(
     allow_origins=["null"] + _extra_origins,
     # Allow local dev ports without having to re-patch CORS each time.
     allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$",
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
