@@ -19,6 +19,19 @@ settings = get_settings()
 app = FastAPI(title=settings.app_name)
 
 
+@app.on_event("startup")
+def on_startup():
+    try:
+        from alembic.config import Config
+        from alembic import command
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        print("Database migrations applied successfully.")
+    except Exception as e:
+        import sys
+        print(f"Failed to run migrations: {e}", file=sys.stderr)
+
+
 @app.exception_handler(Exception)
 async def debug_exception_handler(request, exc):
     tbl = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
