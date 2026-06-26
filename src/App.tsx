@@ -426,15 +426,17 @@ export default function App() {
             // Re-check mounted after the delay in case component unmounted.
             if (!mounted) return;
           } else {
-            // All retries exhausted — backend is still unreachable.
-            // Keep the token: the user is NOT logged out. The workspace
-            // hydration effect will also be skipped (isAuthenticated stays
-            // false), so the app stays on the loading screen until the
-            // user manually reloads once the backend is back.
+            // All retries exhausted — the backend is unreachable (CORS,
+            // network down, cold-start timeout, etc.).
+            // We cannot validate the stored token, so clear it and send
+            // the user to Login. This prevents the "Restoring your session…"
+            // screen from showing forever.
             if (mounted) {
+              clearAuthToken();
+              setAuthToken(null);
               setAuthenticated(false);
-              setSessionStatus("retrying");
               setIsWorkspaceLoading(false);
+              setSessionStatus("unauthenticated");
             }
           }
         }

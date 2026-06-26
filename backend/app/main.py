@@ -6,160 +6,71 @@ from pathlib import Path
 
 from .config import get_settings
 from .middleware.auth_middleware import AuthMiddleware
-from .models import File, Note, Tag, User  # noqa: F401
+from .models import AIResponseCache, ExtractedContent, File, Note, Tag, User  # noqa: F401
+from .routes.ai import router as ai_router
+from .routes.ai import ws_router as ai_ws_router
 from .routes.auth import router as auth_router
+from .routes.content import router as content_router
+from .routes.files import router as files_router
+from .routes.sources import router as sources_router
 from .routes.notes import router as notes_router
 from .routes.protected import router as protected_router
+from .routes.settings import router as settings_router
 from .routes.tags import router as tags_router
+from .services.embeddings import EMBEDDING_DIMENSION, EMBEDDING_MODEL_NAME, initialize_embedding_model
+from .services.translation_service import initialize_translations
 
 settings = get_settings()
 
 app = FastAPI(title=settings.app_name)
 
-
-@app.on_event("startup")
-def on_startup():
-    """Run database migrations on startup using raw SQL for reliability."""
-    import sys
-    try:
-        from sqlalchemy import text
-        from .database import engine
-        with engine.begin() as conn:
-            # Create enums idempotently using PostgreSQL DO blocks
-            conn.execute(text(
-                "DO $$ BEGIN "
-                "  CREATE TYPE ai_provider_enum AS ENUM ('gemini', 'openai', 'deepseek'); "
-                "EXCEPTION WHEN duplicate_object THEN NULL; "
-                "END $$;"
-            ))
-            conn.execute(text(
-                "DO $$ BEGIN "
-                "  CREATE TYPE theme_preference_enum AS ENUM ('light', 'dark'); "
-                "EXCEPTION WHEN duplicate_object THEN NULL; "
-                "END $$;"
-            ))
-            conn.execute(text(
-                "DO $$ BEGIN "
-                "  CREATE TYPE file_type_enum AS ENUM ('pdf', 'video', 'audio', 'document', 'link'); "
-                "EXCEPTION WHEN duplicate_object THEN NULL; "
-                "END $$;"
-            ))
-
-            # Create core tables using IF NOT EXISTS
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY,
-                    full_name VARCHAR(255),
-                    email VARCHAR(255) NOT NULL UNIQUE,
-                    password_hash VARCHAR(255),
-                    profile_picture_url VARCHAR(2048),
-                    preferred_ai_provider ai_provider_enum NOT NULL DEFAULT 'gemini',
-                    preferred_theme theme_preference_enum NOT NULL DEFAULT 'light',
-                    preferred_language VARCHAR(50) NOT NULL DEFAULT 'English',
-                    provider VARCHAR(50) NOT NULL DEFAULT 'email',
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    last_login_at TIMESTAMPTZ
-                );
-                CREATE INDEX IF NOT EXISTS ix_users_id ON users (id);
-                CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email);
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS notes (
-                    id SERIAL PRIMARY KEY,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    title TEXT NOT NULL DEFAULT '',
-                    body TEXT NOT NULL DEFAULT '',
-                    is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
-                    is_favorited BOOLEAN NOT NULL DEFAULT FALSE,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-                CREATE INDEX IF NOT EXISTS ix_notes_id ON notes (id);
-                CREATE INDEX IF NOT EXISTS ix_notes_user_id ON notes (user_id);
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS tags (
-                    id SERIAL PRIMARY KEY,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    name VARCHAR(80) NOT NULL,
-                    CONSTRAINT uq_tags_user_id_name UNIQUE (user_id, name)
-                );
-                CREATE INDEX IF NOT EXISTS ix_tags_id ON tags (id);
-                CREATE INDEX IF NOT EXISTS ix_tags_user_id ON tags (user_id);
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS files (
-                    id SERIAL PRIMARY KEY,
-                    note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    file_name VARCHAR(255) NOT NULL,
-                    file_type file_type_enum NOT NULL,
-                    file_url VARCHAR(2048) NOT NULL,
-                    file_size BIGINT NOT NULL DEFAULT 0,
-                    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-                CREATE INDEX IF NOT EXISTS ix_files_id ON files (id);
-                CREATE INDEX IF NOT EXISTS ix_files_note_id ON files (note_id);
-                CREATE INDEX IF NOT EXISTS ix_files_user_id ON files (user_id);
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS note_tags (
-                    note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-                    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-                    PRIMARY KEY (note_id, tag_id)
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS ix_note_tags_note_id_tag_id ON note_tags (note_id, tag_id);
-            """))
-
-            # Stamp alembic_version so Alembic knows migration 0001 has been applied
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS alembic_version (
-                    version_num VARCHAR(32) NOT NULL,
-                    CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
-                );
-            """))
-            existing = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
-            if not existing:
-                conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('20260329_0001')"))
-
-        print("Database schema initialised successfully.", file=sys.stdout)
-    except Exception as e:
-        print(f"Database startup error: {e}", file=sys.stderr)
-
-
-# Allow localhost in development, plus any origins set via APP_ALLOWED_ORIGINS
-# (comma-separated, e.g. https://aymo-frontend.onrender.com)
+app.add_middleware(AuthMiddleware)
+# Always allow the Vercel production frontend.
+# Additional origins can be added via the APP_ALLOWED_ORIGINS env var
+# (comma-separated list of exact origins).
+_HARDCODED_ORIGINS: list[str] = [
+    "https://aymo-xi.vercel.app",
+]
 _extra_origins: list[str] = [
     o.strip()
     for o in os.getenv("APP_ALLOWED_ORIGINS", "").split(",")
     if o.strip()
 ]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["null"] + _extra_origins,
-    # Allow local dev ports without having to re-patch CORS each time.
+    allow_origins=["null"] + _HARDCODED_ORIGINS + _extra_origins,
     allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(AuthMiddleware)
 
 app.include_router(auth_router)
 app.include_router(protected_router)
 app.include_router(notes_router)
 app.include_router(tags_router)
+app.include_router(files_router)
+app.include_router(sources_router)
+app.include_router(content_router)
+app.include_router(ai_router)
+app.include_router(settings_router)
+app.include_router(ai_ws_router)
 
-# Serve local preview files through the same backend origin to avoid CORS issues.
 project_root = Path(__file__).resolve().parents[2]
 app.mount("/web", StaticFiles(directory=str(project_root)), name="web")
+uploads_root = Path(settings.uploads_dir)
+uploads_root.mkdir(parents=True, exist_ok=True)
+app.mount(settings.uploads_base_url, StaticFiles(directory=str(uploads_root.resolve())), name="uploads")
+
+
+@app.on_event("startup")
+def warm_embedding_model():
+    initialize_translations()
+    initialize_embedding_model()
+    app.state.embedding_model_name = EMBEDDING_MODEL_NAME
+    app.state.embedding_dimension = EMBEDDING_DIMENSION
 
 
 @app.get("/health")
 def health():
     return {"status": "ok", "environment": settings.app_env}
-
-
-
-
