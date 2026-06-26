@@ -63,8 +63,27 @@ uploads_root.mkdir(parents=True, exist_ok=True)
 app.mount(settings.uploads_base_url, StaticFiles(directory=str(uploads_root.resolve())), name="uploads")
 
 
+def run_migrations():
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        from alembic.config import Config
+        from alembic import command
+        
+        project_dir = Path(__file__).resolve().parents[2]
+        ini_path = project_dir / "alembic.ini"
+        
+        logger.info(f"Running database migrations from {ini_path}")
+        alembic_cfg = Config(str(ini_path))
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Database migrations applied successfully.")
+    except Exception as e:
+        logger.error(f"Error running database migrations: {e}", exc_info=True)
+
+
 @app.on_event("startup")
 def warm_embedding_model():
+    run_migrations()
     initialize_translations()
     initialize_embedding_model()
     app.state.embedding_model_name = EMBEDDING_MODEL_NAME
