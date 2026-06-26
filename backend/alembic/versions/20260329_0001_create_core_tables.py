@@ -20,31 +20,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 ai_provider_enum = sa.Enum("gemini", "openai", "deepseek", name="ai_provider_enum")
 theme_preference_enum = sa.Enum("light", "dark", name="theme_preference_enum")
-file_type_enum = sa.Enum("pdf", "video", "audio", "document", "link", name="file_type_enum")
+file_type_enum = sa.Enum("image", "pdf", "video", "audio", "document", "link", name="file_type_enum")
 
 
 def upgrade() -> None:
     bind = op.get_bind()
-    # Use raw SQL to ensure idempotent enum creation even if the type
-    # already exists from a previously interrupted migration run.
-    bind.execute(sa.text(
-        "DO $$ BEGIN "
-        "  CREATE TYPE ai_provider_enum AS ENUM ('gemini', 'openai', 'deepseek'); "
-        "EXCEPTION WHEN duplicate_object THEN NULL; "
-        "END $$;"
-    ))
-    bind.execute(sa.text(
-        "DO $$ BEGIN "
-        "  CREATE TYPE theme_preference_enum AS ENUM ('light', 'dark'); "
-        "EXCEPTION WHEN duplicate_object THEN NULL; "
-        "END $$;"
-    ))
-    bind.execute(sa.text(
-        "DO $$ BEGIN "
-        "  CREATE TYPE file_type_enum AS ENUM ('pdf', 'video', 'audio', 'document', 'link'); "
-        "EXCEPTION WHEN duplicate_object THEN NULL; "
-        "END $$;"
-    ))
+    ai_provider_enum.create(bind, checkfirst=True)
+    theme_preference_enum.create(bind, checkfirst=True)
+    file_type_enum.create(bind, checkfirst=True)
 
     op.create_table(
         "users",

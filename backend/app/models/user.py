@@ -30,7 +30,7 @@ class User(Base):
         default=ThemePreference.LIGHT,
         nullable=False,
     )
-    preferred_language: Mapped[str] = mapped_column(String(50), default="English", nullable=False)
+    preferred_language: Mapped[str] = mapped_column(String(10), default="en", nullable=False)
     provider: Mapped[str] = mapped_column(String(50), default="email", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -38,3 +38,12 @@ class User(Base):
     notes: Mapped[List["Note"]] = relationship("Note", back_populates="user", cascade="all, delete-orphan")
     tags: Mapped[List["Tag"]] = relationship("Tag", back_populates="user", cascade="all, delete-orphan")
     files: Mapped[List["File"]] = relationship("File", back_populates="user", cascade="all, delete-orphan")
+    sources: Mapped[List["Source"]] = relationship("Source", back_populates="user", cascade="all, delete-orphan")
+    extracted_contents: Mapped[List["ExtractedContent"]] = relationship(
+        "ExtractedContent",
+        cascade="all, delete-orphan",
+    )
+    ai_responses: Mapped[List["AIResponseCache"]] = relationship(
+        "AIResponseCache",
+        cascade="all, delete-orphan",
+    )

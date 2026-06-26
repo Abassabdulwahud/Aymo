@@ -17,6 +17,8 @@ class FileSummary(BaseModel):
     file_type: str
     file_url: str
     file_size: int
+    extraction_status: str
+    extraction_error: Optional[str] = None
     uploaded_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -64,4 +66,3 @@ class NoteResponse(BaseModel):
 class NoteListResponse(BaseModel):
     items: List[NoteResponse]
     total: int
-

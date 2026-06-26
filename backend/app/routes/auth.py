@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -19,6 +19,7 @@ from ..schemas.auth import (
 )
 from ..utils.emailing import build_password_reset_link, password_reset_email_ready, send_password_reset_email
 from ..utils.oauth import verify_apple_oauth_token, verify_google_oauth_token
+from ..services.translation_service import DEFAULT_LANGUAGE_CODE, normalize_language_code, translate
 from ..utils.security import (
     create_access_token,
     create_password_reset_token,
@@ -29,6 +30,13 @@ from ..utils.security import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
+
+
+def _language_for_email(db: Session, email: str) -> str:
+    user = db.query(User).filter(User.email == email.lower()).first()
+    if not user:
+        return DEFAULT_LANGUAGE_CODE
+    return normalize_language_code(user.preferred_language)
 
 
 def _apple_provider_meta():
@@ -95,11 +103,12 @@ def auth_providers():
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+def register(payload: RegisterRequest, response: Response, db: Session = Depends(get_db)):
+    language_code = DEFAULT_LANGUAGE_CODE
     email = payload.email.lower()
     existing = db.query(User).filter(User.email == email).first()
     if existing:
-        raise HTTPException(status_code=409, detail="Email already exists.")
+        raise HTTPException(status_code=409, detail=translate(language_code, "email_exists"))
 
     user = User(
         full_name=payload.full_name.strip(),
@@ -111,18 +120,20 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    response.headers["X-AYMO-Message"] = translate(language_code, "register_success")
     return user
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
+    language_code = _language_for_email(db, payload.email)
     email = payload.email.lower()
     user = db.query(User).filter(User.email == email).first()
     if not user or not user.password_hash:
-        raise HTTPException(status_code=401, detail="Invalid credentials.")
+        raise HTTPException(status_code=401, detail=translate(language_code, "login_failed"))
 
     if not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials.")
+        raise HTTPException(status_code=401, detail=translate(language_code, "login_failed"))
 
     token = create_access_token(user.email)
 
@@ -135,11 +146,13 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     except Exception:
         db.rollback()
 
+    response.headers["X-AYMO-Message"] = translate(language_code, "login_success")
     return TokenResponse(access_token=token)
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
 def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    language_code = _language_for_email(db, payload.email)
     email = payload.email.lower()
     user = db.query(User).filter(User.email == email).first()
     reset_token = None
@@ -153,13 +166,13 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
                 send_password_reset_email(user.email, reset_url)
                 email_delivery_used = True
             except Exception as exc:
-                detail = "Could not send password reset email."
+                detail = translate(language_code, "password_reset_failed")
                 if settings.app_env == "development":
                     detail = f"{detail} {exc}"
                 raise HTTPException(status_code=500, detail=detail) from exc
 
     response = ForgotPasswordResponse(
-        message="If that email exists, password reset instructions have been prepared.",
+        message=translate(language_code, "password_reset_prepared"),
     )
     if settings.app_env == "development" and reset_token and not email_delivery_used:
         response.reset_token = reset_token
@@ -168,16 +181,17 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
 
 
 @router.post("/reset-password", response_model=TokenResponse)
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+def reset_password(payload: ResetPasswordRequest, response: Response, db: Session = Depends(get_db)):
     try:
         token_data = decode_password_reset_token(payload.token)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     email = (token_data.get("sub") or "").lower()
+    language_code = _language_for_email(db, email)
     user = db.query(User).filter(User.email == email).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found.")
+        raise HTTPException(status_code=404, detail=translate(language_code, "user_not_found"))
 
     user.password_hash = hash_password(payload.new_password)
     if user.provider != "email":
@@ -192,15 +206,16 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
     except Exception:
         db.rollback()
 
+    response.headers["X-AYMO-Message"] = translate(language_code, "password_reset_success")
     return TokenResponse(access_token=token)
 
 
 @router.post("/google", response_model=TokenResponse)
-def google_sign_in(payload: OAuthRequest, db: Session = Depends(get_db)):
+def google_sign_in(payload: OAuthRequest, response: Response, db: Session = Depends(get_db)):
     try:
         email = verify_google_oauth_token(payload.token)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        raise HTTPException(status_code=401, detail=translate(DEFAULT_LANGUAGE_CODE, "invalid_oauth")) from exc
 
     user = db.query(User).filter(User.email == email).first()
     if not user:
@@ -224,15 +239,16 @@ def google_sign_in(payload: OAuthRequest, db: Session = Depends(get_db)):
         except Exception:
             db.rollback()
 
+    response.headers["X-AYMO-Message"] = translate(normalize_language_code(user.preferred_language), "login_success")
     return TokenResponse(access_token=create_access_token(user.email))
 
 
 @router.post("/apple", response_model=TokenResponse)
-def apple_sign_in(payload: OAuthRequest, db: Session = Depends(get_db)):
+def apple_sign_in(payload: OAuthRequest, response: Response, db: Session = Depends(get_db)):
     try:
         email = verify_apple_oauth_token(payload.token)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        raise HTTPException(status_code=401, detail=translate(DEFAULT_LANGUAGE_CODE, "invalid_oauth")) from exc
 
     user = db.query(User).filter(User.email == email).first()
     if not user:
@@ -256,4 +272,5 @@ def apple_sign_in(payload: OAuthRequest, db: Session = Depends(get_db)):
         except Exception:
             db.rollback()
 
+    response.headers["X-AYMO-Message"] = translate(normalize_language_code(user.preferred_language), "login_success")
     return TokenResponse(access_token=create_access_token(user.email))

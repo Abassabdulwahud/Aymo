@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import List, Optional
 
-from sqlalchemy import BigInteger, DateTime, Enum as SqlEnum, ForeignKey, Integer, String, func
+from sqlalchemy import BigInteger, DateTime, Enum as SqlEnum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -24,7 +25,29 @@ class File(Base):
     )
     file_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    extracted_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    extraction_status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
+    extraction_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    viewer_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    detailed_steps: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    processed_chunks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_chunks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    partial_transcript: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    extracted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     note: Mapped["Note"] = relationship("Note", back_populates="files")
     user: Mapped["User"] = relationship("User", back_populates="files")
+    extracted_items: Mapped[List["ExtractedContent"]] = relationship(
+        "ExtractedContent",
+        back_populates="file",
+        cascade="all, delete-orphan",
+    )
+    embeddings: Mapped[List["NoteEmbedding"]] = relationship(
+        "NoteEmbedding",
+        back_populates="file",
+        cascade="all, delete-orphan",
+    )

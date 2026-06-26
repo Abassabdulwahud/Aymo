@@ -10,11 +10,40 @@ alembic==1.14.0
 
 # ── Auth / Security ───────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 
 # ── Data validation ───────────────────────────────────────────────────────────
 pydantic[email]==2.10.6
 
-# ── HTTP / OAuth ──────────────────────────────────────────────────────────────
+# ── HTTP / Auth ───────────────────────────────────────────────────────────────
 google-auth==2.37.0
 requests==2.32.3
+
+# ── File parsing ──────────────────────────────────────────────────────────────
+beautifulsoup4==4.12.3
+openpyxl==3.1.5
+pillow==10.4.0
+pymupdf==1.25.1
+python-docx==1.1.2
+python-pptx==0.6.23
+pytesseract==0.3.13
+
+# ── Task queue / Cache ────────────────────────────────────────────────────────
+celery==5.4.0
+redis==5.2.1
+
+# ── ML / Embeddings ──────────────────────────────────────────────────────────
+# CPU-only torch — avoids a 2 GB GPU wheel download on Render's free tier.
+# Must be installed BEFORE sentence-transformers.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.4.1+cpu
+torchvision==0.19.1+cpu
+
+sentence-transformers==3.3.1
+
+# ── Audio transcription ───────────────────────────────────────────────────────
+# ctranslate2 3.x supports Python 3.11 with pre-built wheels (no Rust/maturin).
+ctranslate2==4.4.0
+faster-whisper==1.1.1
+imageio-ffmpeg==0.5.1
