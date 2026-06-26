@@ -69,12 +69,17 @@ def run_migrations():
     try:
         from alembic.config import Config
         from alembic import command
-        
-        project_dir = Path(__file__).resolve().parents[2]
-        ini_path = project_dir / "alembic.ini"
-        
+
+        # main.py is at backend/app/main.py
+        # parents[0] = backend/app/
+        # parents[1] = backend/          <-- alembic.ini lives here
+        backend_dir = Path(__file__).resolve().parent.parent
+        ini_path = backend_dir / "alembic.ini"
+
         logger.info(f"Running database migrations from {ini_path}")
         alembic_cfg = Config(str(ini_path))
+        # Ensure alembic script_location resolves relative to backend_dir
+        alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
         command.upgrade(alembic_cfg, "head")
         logger.info("Database migrations applied successfully.")
     except Exception as e:
