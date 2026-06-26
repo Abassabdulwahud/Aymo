@@ -6,7 +6,7 @@ services:
     rootDir: backend           # All build/start commands run from here
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    plan: free                 # Change to "starter" or higher for always-on
+    plan: free                 # Change to "starter" or above for production
 
     envVars:
       # ── Python version ─────────────────────────────────────────────────────
@@ -17,20 +17,86 @@ services:
       - key: APP_ENV
         value: production
 
-      # ── CORS: set to your frontend URL after it deploys ───────────────────
+      # ── Set this to your actual Render frontend URL after first deploy ──────
       # - key: APP_ALLOWED_ORIGINS
       #   value: https://YOUR-FRONTEND.onrender.com
 
-      # ── Database ───────────────────────────────────────────────────────────
-      # Link this to your Render PostgreSQL service, OR paste the connection
-      # string directly in the Render Dashboard → Environment tab.
+      # ── Database (set from Render PostgreSQL service) ──────────────────────
       - key: DATABASE_URL
         fromDatabase:
           name: aymo-db         # Must match your Render PostgreSQL service name
           property: connectionString
 
-      # ── Secrets (set manually in Render Dashboard → Environment tab) ───────
+      # ── Redis (set from Render Redis service) ─────────────────────────────
+      - key: REDIS_URL
+        fromService:
+          name: aymo-redis      # Must match your Render Redis service name
+          type: redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: aymo-redis
+          type: redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          name: aymo-redis
+          type: redis
+          property: connectionString
+
+      # ── Secrets (add via Render Dashboard → Environment tab) ───────────────
       # - key: JWT_SECRET_KEY
-      #   value: <run: python -c "import secrets; print(secrets.token_urlsafe(48))">
-      # - key: GOOGLE_CLIENT_ID
+      #   value: <generate with: python -c "import secrets; print(secrets.token_urlsafe(48))">
+      # - key: OPENAI_API_KEY
       #   value: ...
+      # - key: GEMINI_API_KEY
+      #   value: ...
+
+      # ── Transcription: use "openai" on free tier (no GPU for faster-whisper)
+      - key: TRANSCRIPTION_PROVIDER
+        value: openai
+      - key: TRANSCRIPTION_MODEL
+        value: whisper-1
+
+      # ── Uploads dir ────────────────────────────────────────────────────────
+      - key: UPLOADS_DIR
+        value: /opt/render/project/src/uploads
+      - key: UPLOADS_BASE_URL
+        value: /uploads
+
+      # ── Misc ───────────────────────────────────────────────────────────────
+      - key: CELERY_TASK_ALWAYS_EAGER
+        value: "false"
+
+  # ─── Celery Worker (optional — comment out if not using async processing) ──
+  # - type: worker
+  #   name: aymo-celery-worker
+  #   runtime: python
+  #   rootDir: backend
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=1
+  #   plan: free
+  #   envVars:
+  #     - key: PYTHON_VERSION
+  #       value: "3.11.11"
+  #     - key: APP_ENV
+  #       value: production
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: aymo-db
+  #         property: connectionString
+  #     - key: REDIS_URL
+  #       fromService:
+  #         name: aymo-redis
+  #         type: redis
+  #         property: connectionString
+  #     - key: CELERY_BROKER_URL
+  #       fromService:
+  #         name: aymo-redis
+  #         type: redis
+  #         property: connectionString
+  #     - key: CELERY_RESULT_BACKEND
+  #       fromService:
+  #         name: aymo-redis
+  #         type: redis
+  #         property: connectionString
