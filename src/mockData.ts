@@ -1,4 +1,4 @@
-import { InsightItem, UploadedItem } from "./types";
+﻿import { InsightItem, UploadedItem } from "./types";
 
 export const INITIAL_TITLE = "Neuroscience Reading Notes";
 
@@ -16,21 +16,21 @@ Questions to explore:
 
 export const MOCK_UPLOADS: UploadedItem[] = [
   {
-    id: "f-1",
+    id: 1,
     name: "cognitive-load.pdf",
     kind: "pdf",
     sizeLabel: "2.4 MB",
     addedAt: "2h ago",
   },
   {
-    id: "f-2",
+    id: 2,
     name: "lecture-week-3.mp4",
     kind: "video",
     sizeLabel: "84 MB",
     addedAt: "1h ago",
   },
   {
-    id: "f-3",
+    id: 3,
     name: "memory-research-link",
     kind: "link",
     sizeLabel: "URL",
@@ -38,7 +38,7 @@ export const MOCK_UPLOADS: UploadedItem[] = [
     addedAt: "30m ago",
   },
   {
-    id: "f-4",
+    id: 4,
     name: "interview-audio.m4a",
     kind: "audio",
     sizeLabel: "17 MB",
@@ -49,16 +49,19 @@ export const MOCK_UPLOADS: UploadedItem[] = [
 export const MOCK_INSIGHTS: InsightItem[] = [
   {
     id: "i-1",
+    type: "key-takeaways",
     title: "Core Theme",
     detail: "Your note focuses on attention, memory, and practical learning systems.",
   },
   {
     id: "i-2",
+    type: "summary",
     title: "Quick Summary",
     detail: "You connected neuroscience concepts to day-to-day study strategy and asked strong follow-up questions.",
   },
   {
     id: "i-3",
+    type: "questions",
     title: "Learning Tip",
     detail: "Convert the two open questions into weekly experiments and track outcomes directly in this note.",
   },

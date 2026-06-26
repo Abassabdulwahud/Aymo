@@ -1,6 +1,8 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+﻿import { FormEvent, useEffect, useRef, useState } from "react";
 import { AuthDivider } from "./AuthDivider";
+import { useNavigate } from "react-router-dom";
 import { AuthHeader } from "./AuthHeader";
+import { useI18n } from "../i18n";
 import { PasswordField } from "./PasswordField";
 import { SocialAuthButtons } from "./SocialAuthButtons";
 import { fetchAuthProviders, type AuthProvidersConfig } from "../services/authService";
@@ -41,6 +43,10 @@ const GOOGLE_SDK_URL = "https://accounts.google.com/gsi/client";
 const APPLE_SDK_URL = "https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js";
 const scriptCache = new Map<string, Promise<void>>();
 
+type AuthMode = "login" | "signup" | "reset";
+
+type EmailAuthMode = Exclude<AuthMode, "reset">;
+
 function loadScript(src: string): Promise<void> {
   const cached = scriptCache.get(src);
   if (cached) return cached;
@@ -61,10 +67,14 @@ function loadScript(src: string): Promise<void> {
     script.src = src;
     script.async = true;
     script.defer = true;
-    script.addEventListener("load", () => {
-      script.dataset.loaded = "true";
-      resolve();
-    }, { once: true });
+    script.addEventListener(
+      "load",
+      () => {
+        script.dataset.loaded = "true";
+        resolve();
+      },
+      { once: true },
+    );
     script.addEventListener("error", () => reject(new Error(`Failed to load ${src}`)), { once: true });
     document.head.appendChild(script);
   });
@@ -82,18 +92,18 @@ function randomValue(): string {
 
 interface AuthPageProps {
   darkMode: boolean;
+  initialMode?: EmailAuthMode;
   onToggleTheme: () => void;
-  onEmailAuth: (params: { mode: AuthMode; email: string; password: string; fullName: string }) => Promise<void>;
+  onEmailAuth: (params: { mode: EmailAuthMode; email: string; password: string; fullName: string }) => Promise<void>;
   onGoogleAuth: (oauthToken: string) => Promise<void>;
   onAppleAuth: (oauthToken: string) => Promise<void>;
   onForgotPassword: (email: string) => Promise<void>;
   onResetPassword: (token: string, newPassword: string) => Promise<void>;
 }
 
-type AuthMode = "login" | "signup" | "reset";
-
 export function AuthPage({
   darkMode,
+  initialMode = "login",
   onToggleTheme,
   onEmailAuth,
   onGoogleAuth,
@@ -101,7 +111,9 @@ export function AuthPage({
   onForgotPassword,
   onResetPassword,
 }: AuthPageProps) {
-  const [mode, setMode] = useState<AuthMode>("login");
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -114,7 +126,7 @@ export function AuthPage({
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const [resetToken, setResetToken] = useState<string | null>(null);
 
-  const submitLabel = mode === "login" ? "Log In" : mode === "signup" ? "Sign Up" : "Reset Password";
+  const submitLabel = mode === "login" ? t("auth.login") : mode === "signup" ? t("auth.signup") : t("auth.resetPassword");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -124,6 +136,13 @@ export function AuthPage({
       setMode("reset");
     }
   }, []);
+
+  useEffect(() => {
+    if (resetToken) {
+      return;
+    }
+    setMode(initialMode);
+  }, [initialMode, resetToken]);
 
   useEffect(() => {
     let active = true;
@@ -151,18 +170,20 @@ export function AuthPage({
       return;
     }
 
+    const googleClientId = googleProvider.clientId;
+
     let cancelled = false;
-    setGoogleStatus("Loading Google sign-in...");
+    setGoogleStatus(t("auth.googleLoading"));
 
     void loadScript(GOOGLE_SDK_URL)
       .then(() => {
         if (cancelled || !googleButtonRef.current || !window.google?.accounts?.id) return;
         googleButtonRef.current.innerHTML = "";
         window.google.accounts.id.initialize({
-          client_id: googleProvider.clientId as string,
+          client_id: googleClientId,
           callback: ({ credential }) => {
             if (!credential) {
-              setError("Google sign-in did not return a usable identity token.");
+              setError(t("auth.googleTokenMissing"));
               return;
             }
             void (async () => {
@@ -171,7 +192,7 @@ export function AuthPage({
                 setError(null);
                 await onGoogleAuth(credential);
               } catch (err) {
-                setError(err instanceof Error ? err.message : "Google authentication failed.");
+                setError(err instanceof Error ? err.message : t("auth.googleFailed"));
               } finally {
                 setIsSubmitting(false);
               }
@@ -189,7 +210,7 @@ export function AuthPage({
       })
       .catch(() => {
         if (cancelled) return;
-        setGoogleStatus("Google sign-in could not load in this browser right now.");
+        setGoogleStatus(t("auth.googleLoadFailed"));
       });
 
     return () => {
@@ -198,14 +219,14 @@ export function AuthPage({
         googleButtonRef.current.innerHTML = "";
       }
     };
-  }, [darkMode, mode, onGoogleAuth, providers]);
+  }, [darkMode, mode, onGoogleAuth, providers, t]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
 
     if ((mode === "signup" || mode === "reset") && password !== confirmPassword) {
-      setError("Passwords do not match.");
+      setError(t("auth.passwordsMismatch"));
       return;
     }
 
@@ -213,7 +234,7 @@ export function AuthPage({
       setIsSubmitting(true);
       if (mode === "reset") {
         if (!resetToken) {
-          throw new Error("Password reset link is missing or invalid.");
+          throw new Error(t("auth.resetLinkInvalid"));
         }
         await onResetPassword(resetToken, password);
         const nextUrl = new URL(window.location.href);
@@ -223,14 +244,14 @@ export function AuthPage({
         await onEmailAuth({ mode, email, password, fullName });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Authentication failed.");
+      setError(err instanceof Error ? err.message : t("auth.authFailed"));
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleGoogle = async () => {
-    setError(googleStatus ?? "Google sign-in is still loading.");
+    setError(googleStatus ?? t("auth.googleStillLoading"));
   };
 
   const handleApple = async () => {
@@ -238,22 +259,24 @@ export function AuthPage({
 
     const appleProvider = providers?.apple;
     if (!appleProvider?.enabled || !appleProvider.clientId || !appleProvider.redirectUri) {
-      setError(appleStatus ?? "Apple sign-in is not ready in this environment.");
+      setError(appleStatus ?? t("auth.appleNotReady"));
       return;
     }
+
+    const redirectUri = appleProvider.redirectUri;
 
     try {
       setIsSubmitting(true);
       await loadScript(APPLE_SDK_URL);
 
       if (!window.AppleID?.auth) {
-        throw new Error("Apple sign-in could not initialize in this browser.");
+        throw new Error(t("auth.appleInitFailed"));
       }
 
       window.AppleID.auth.init({
         clientId: appleProvider.clientId,
         scope: "name email",
-        redirectURI: appleProvider.redirectUri,
+        redirectURI: redirectUri,
         usePopup: true,
         state: randomValue(),
         nonce: randomValue(),
@@ -262,12 +285,12 @@ export function AuthPage({
       const response = await window.AppleID.auth.signIn();
       const token = response.authorization?.id_token;
       if (!token) {
-        throw new Error("Apple sign-in did not return an identity token.");
+        throw new Error(t("auth.appleTokenMissing"));
       }
 
       await onAppleAuth(token);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Apple authentication failed.");
+      setError(err instanceof Error ? err.message : t("auth.appleFailed"));
     } finally {
       setIsSubmitting(false);
     }
@@ -276,7 +299,7 @@ export function AuthPage({
   const handleForgotPassword = async () => {
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) {
-      setError("Enter your email first so we know which account to reset.");
+      setError(t("auth.enterEmailFirst"));
       return;
     }
 
@@ -285,7 +308,7 @@ export function AuthPage({
       setError(null);
       await onForgotPassword(normalizedEmail);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start password reset.");
+      setError(err instanceof Error ? err.message : t("auth.resetStartFailed"));
     } finally {
       setIsSubmitting(false);
     }
@@ -294,19 +317,19 @@ export function AuthPage({
   return (
     <div className="site-shell auth-shell">
       <button className="btn auth-theme-btn" type="button" onClick={onToggleTheme}>
-        {darkMode ? "Light Mode" : "Dark Mode"}
+        {darkMode ? t("auth.lightMode") : t("auth.darkMode")}
       </button>
 
       <section className="auth-card">
         <AuthHeader
-          subtitle={mode === "login" ? "Welcome back" : mode === "signup" ? "Create your account" : "Choose a new password"}
+          subtitle={mode === "login" ? t("auth.welcomeBack") : mode === "signup" ? t("auth.createAccount") : t("auth.chooseNewPassword")}
           darkMode={darkMode}
         />
 
         <form className="auth-form" onSubmit={handleSubmit}>
           {mode === "signup" ? (
             <div className="auth-field">
-              <label className="field-label" htmlFor="full-name">Full name</label>
+              <label className="field-label" htmlFor="full-name">{t("auth.fullName")}</label>
               <input
                 id="full-name"
                 type="text"
@@ -319,7 +342,7 @@ export function AuthPage({
 
           {mode !== "reset" ? (
             <div className="auth-field">
-              <label className="field-label" htmlFor="auth-email">Email</label>
+              <label className="field-label" htmlFor="auth-email">{t("auth.email")}</label>
               <input
                 id="auth-email"
                 type="email"
@@ -332,7 +355,7 @@ export function AuthPage({
 
           <PasswordField
             id="auth-password"
-            label="Password"
+            label={t("auth.password")}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             required
@@ -341,7 +364,7 @@ export function AuthPage({
           {mode === "signup" || mode === "reset" ? (
             <PasswordField
               id="confirm-password"
-              label="Confirm password"
+              label={t("auth.confirmPassword")}
               value={confirmPassword}
               onChange={(event) => setConfirmPassword(event.target.value)}
               required
@@ -349,12 +372,12 @@ export function AuthPage({
           ) : null}
 
           <button className="btn btn-solid auth-submit" type="submit">
-            {isSubmitting ? "Please wait..." : submitLabel}
+            {isSubmitting ? t("auth.pleaseWait") : submitLabel}
           </button>
 
           {mode === "login" ? (
             <button type="button" className="text-link auth-forgot" onClick={() => void handleForgotPassword()}>
-              Forgot password?
+              {t("auth.forgotPassword")}
             </button>
           ) : null}
         </form>
@@ -380,7 +403,7 @@ export function AuthPage({
         {error ? <p className="auth-error">{error}</p> : null}
 
         <p className="auth-switch-text">
-          {mode === "login" ? "Don't have an account?" : mode === "signup" ? "Already have an account?" : "Remembered it?"}{" "}
+          {mode === "login" ? t("auth.noAccount") : mode === "signup" ? t("auth.haveAccount") : t("auth.remembered")}{" "}
           <button
             type="button"
             className="text-link"
@@ -390,13 +413,13 @@ export function AuthPage({
                 nextUrl.searchParams.delete("resetToken");
                 window.history.replaceState({}, "", nextUrl.toString());
                 setResetToken(null);
-                setMode("login");
+                navigate("/login", { replace: true });
                 return;
               }
-              setMode((value) => (value === "login" ? "signup" : "login"));
+              navigate(mode === "login" ? "/signup" : "/login");
             }}
           >
-            {mode === "login" ? "Sign up" : "Log in"}
+            {mode === "login" ? t("auth.signupCta") : t("auth.loginCta")}
           </button>
         </p>
       </section>

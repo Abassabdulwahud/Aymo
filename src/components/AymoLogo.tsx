@@ -1,4 +1,5 @@
 interface AymoLogoProps {
+  variant?: "full" | "icon";
   size?: "large" | "medium" | "small";
   darkMode?: boolean;
   className?: string;
@@ -6,19 +7,22 @@ interface AymoLogoProps {
 }
 
 export function AymoLogo({
+  variant = "icon",
   size = "medium",
   darkMode = false,
   className = "",
-  alt = "AYMO Notebook logo",
+  alt = "AYMO logo",
 }: AymoLogoProps) {
+  const src = variant === "full" ? "/aymo-logo-new.png" : "/aymo-logo-icon-new.png";
   return (
     <img
-      src="/aymo-logo-main.png"
+      src={src}
       alt={alt}
-      className={`aymo-logo aymo-logo-${size} ${darkMode ? "is-dark" : ""} ${className}`.trim()}
+      className={`aymo-logo aymo-logo-${size} ${darkMode ? "is-dark" : ""} ${variant === "full" ? "is-full" : ""} ${className}`.trim().replace(/\s+/g, ' ')}
       loading="eager"
       decoding="async"
     />
   );
 }
+
 

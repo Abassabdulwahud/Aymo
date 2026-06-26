@@ -1,34 +1,44 @@
 import { UploadKind } from "../types";
 
 interface FileCardProps {
+  id: number;
   name: string;
   kind: UploadKind;
   sizeLabel: string;
   addedAt: string;
   source?: string;
+  onRemove?: (id: number) => void;
 }
 
 const KIND_LABEL: Record<UploadKind, string> = {
+  image: "IMG",
   pdf: "PDF",
-  doc: "DOC",
+  document: "DOC",
   video: "VID",
   audio: "AUD",
   link: "URL",
 };
 
-export function FileCard({ name, kind, sizeLabel, addedAt, source }: FileCardProps) {
+export function FileCard({ id, name, kind, sizeLabel, addedAt, source, onRemove }: FileCardProps) {
+  const actionLabel = kind === "link" ? "Open source link" : "Open attachment";
+
   return (
     <article className="file-card">
       <div className="file-icon" aria-hidden="true">{KIND_LABEL[kind]}</div>
       <div className="file-meta">
         <p className="file-name">{name}</p>
         <p className="file-subtext">
-          {sizeLabel} · Added {addedAt}
+          {sizeLabel} | Added {addedAt}
         </p>
         {source ? (
           <a className="file-link" href={source} target="_blank" rel="noreferrer">
-            Open source link
+            {actionLabel}
           </a>
+        ) : null}
+        {onRemove ? (
+          <button className="btn btn-ghost" type="button" onClick={() => onRemove(id)}>
+            Remove
+          </button>
         ) : null}
       </div>
     </article>

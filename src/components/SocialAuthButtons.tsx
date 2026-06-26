@@ -1,4 +1,5 @@
-import { RefObject } from "react";
+﻿import { RefObject } from "react";
+import { useI18n } from "../i18n";
 
 interface SocialAuthButtonsProps {
   mode: "login" | "signup";
@@ -23,7 +24,8 @@ export function SocialAuthButtons({
   appleEnabled,
   appleStatus,
 }: SocialAuthButtonsProps) {
-  const text = mode === "login" ? "Sign in" : "Sign up";
+  const { t } = useI18n();
+  const text = mode === "login" ? t("auth.loginCta") : t("auth.signupCta");
 
   return (
     <div className="social-auth-group">

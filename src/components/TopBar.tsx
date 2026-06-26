@@ -7,7 +7,7 @@ export function TopBar({ onSave, onShare }: TopBarProps) {
   return (
     <header className="topbar">
       <div>
-        <p className="eyebrow">AYMO Notebook</p>
+        <p className="eyebrow">AYMO</p>
         <h1 className="page-title">Note Page</h1>
       </div>
       <div className="topbar-actions">

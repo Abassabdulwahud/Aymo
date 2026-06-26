@@ -9,17 +9,17 @@ interface AIProviderOption {
 export const AI_PROVIDER_OPTIONS: AIProviderOption[] = [
   {
     id: "gemini",
-    title: "Google Gemini API",
+    title: "Gemini",
     description: "Fast and great for multimodal content like images and audio.",
   },
   {
     id: "openai",
-    title: "OpenAI API",
+    title: "OpenAI",
     description: "Detailed insights and advanced reasoning across complex notes.",
   },
   {
     id: "deepseek",
-    title: "DeepSeek API",
+    title: "DeepSeek",
     description: "Cost-effective and excellent for logical analysis and reasoning tasks.",
   },
 ];

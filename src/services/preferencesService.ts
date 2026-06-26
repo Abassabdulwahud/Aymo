@@ -1,69 +1,107 @@
-import { AIProvider } from "../types";
-
-// Resolve the backend base URL using the same strategy as authService.ts.
-// In production (Vercel → Render), set VITE_API_BASE_URL to the Render service URL.
-// In local dev, falls back to window.location.origin (backend runs on same host or proxied).
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "") || window.location.origin;
+import { languageCodeToName, normalizeLanguageCode } from "../i18n";
+import { apiRequest } from "./apiClient";
+import { safeStorageGet, safeStorageSet } from "./storage";
 
 const STORAGE_KEY = "aymo.preferences";
 
 export interface UserPreferences {
-  aiProvider: AIProvider;
+  theme: "light" | "dark";
+  language: string;
 }
 
 interface BackendPreferencesResponse {
-  aiProvider?: AIProvider;
+  theme?: "light" | "dark";
+  language?: string;
+  languageCode?: string;
 }
 
-export async function loadPreferences(): Promise<UserPreferences> {
+export async function loadPreferences(token?: string | null): Promise<UserPreferences> {
+  if (!token) {
+    return loadLocal();
+  }
+
   try {
-    const response = await fetch(`${API_BASE_URL}/api/settings/preferences`, { method: "GET" });
-    if (response.ok) {
-      const data = (await response.json()) as BackendPreferencesResponse;
-      if (data.aiProvider) {
-        persistLocal({ aiProvider: data.aiProvider });
-        return { aiProvider: data.aiProvider };
-      }
+    const data = await apiRequest<BackendPreferencesResponse>("/api/protected/settings/preferences", {
+      method: "GET",
+      token,
+    });
+    if (data.theme && data.language) {
+      const normalizedLanguage = normalizeLanguageCode(data.languageCode ?? data.language);
+      const preferences = {
+        theme: data.theme,
+        language: normalizedLanguage,
+      };
+      persistLocal(preferences);
+      return preferences;
     }
   } catch {
-    // fallback to local storage when backend is unavailable in preview mode
+    // fallback to local storage when backend is unavailable
   }
 
   return loadLocal();
 }
 
-export async function saveAIProviderPreference(aiProvider: AIProvider): Promise<void> {
-  persistLocal({ aiProvider });
+export async function savePreferences(
+  token: string | null | undefined,
+  patch: Partial<UserPreferences>,
+): Promise<UserPreferences> {
+  const nextPreferences = { ...loadLocal(), ...patch };
+  persistLocal(nextPreferences);
+
+  if (!token) {
+    return nextPreferences;
+  }
 
   try {
-    await fetch(`${API_BASE_URL}/api/settings/preferences`, {
+    const response = await apiRequest<BackendPreferencesResponse>("/api/protected/settings/preferences", {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ aiProvider }),
+      token,
+      body: nextPreferences,
     });
+    if (response.theme && response.language) {
+      const normalizedLanguage = normalizeLanguageCode(response.languageCode ?? response.language);
+      const saved = {
+        theme: response.theme,
+        language: normalizedLanguage,
+      };
+      persistLocal(saved);
+      return saved;
+    }
   } catch {
     // keep local persistence as fallback
   }
+
+  return nextPreferences;
 }
 
 function loadLocal(): UserPreferences {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { aiProvider: "gemini" };
+    const raw = safeStorageGet(STORAGE_KEY);
+    if (!raw) return { theme: "light", language: "en" };
 
     const parsed = JSON.parse(raw) as UserPreferences;
-    if (parsed.aiProvider === "gemini" || parsed.aiProvider === "openai" || parsed.aiProvider === "deepseek") {
-      return parsed;
+    const normalizedLanguage = normalizeLanguageCode(parsed.language);
+    if (
+      (parsed.theme === "light" || parsed.theme === "dark") &&
+      typeof parsed.language === "string" &&
+      parsed.language.trim()
+    ) {
+      return { ...parsed, language: normalizedLanguage };
     }
   } catch {
     // ignore invalid JSON
   }
 
-  return { aiProvider: "gemini" };
+  return { theme: "light", language: "en" };
 }
 
 function persistLocal(preferences: UserPreferences): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+  safeStorageSet(
+    STORAGE_KEY,
+    JSON.stringify({
+      ...preferences,
+      language: normalizeLanguageCode(preferences.language),
+      languageLabel: languageCodeToName(preferences.language),
+    }),
+  );
 }
