@@ -97,4 +97,20 @@ def warm_embedding_model():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "environment": settings.app_env}
+    tables = []
+    error = None
+    try:
+        from .database import SessionLocal
+        db = SessionLocal()
+        from sqlalchemy import inspect
+        inspector = inspect(db.bind)
+        tables = inspector.get_table_names()
+        db.close()
+    except Exception as e:
+        error = str(e)
+    return {
+        "status": "ok",
+        "environment": settings.app_env,
+        "tables": tables,
+        "error": error
+    }
