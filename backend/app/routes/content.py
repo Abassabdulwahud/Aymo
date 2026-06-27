@@ -77,16 +77,14 @@ def queue_pdf_extraction(
         Source.public_url == file_record.file_url,
     ).first()
 
-    if source:
-        task = process_source_task.delay(current_user.id, source.id)
-        task_id = str(task.id)
-    else:
-        task_id = "already-processed"
-
+    # Commit the "queued" state BEFORE dispatching the task.
+    # If Celery runs in eager/synchronous mode the task executes inline inside
+    # .delay() and writes its own completion status via _update_matching_file.
+    # Committing first ensures those writes are never overwritten afterward.
+    import json
     file_record.extraction_status = "queued"
     file_record.extraction_error = None
     file_record.progress_percent = 0
-    import json
     file_record.detailed_steps = json.dumps([
         {"name": "Uploading & Queueing", "status": "completed"},
         {"name": "Extracting PDF Text", "status": "pending"},
@@ -94,6 +92,12 @@ def queue_pdf_extraction(
     ])
     db.add(file_record)
     db.commit()
+
+    if source:
+        task = process_source_task.delay(current_user.id, source.id)
+        task_id = str(task.id)
+    else:
+        task_id = "already-processed"
 
     return FileJobResponse(
         file_id=file_record.id,
@@ -127,18 +131,19 @@ def queue_media_transcription(
         source.duration_seconds = payload.duration_seconds
         db.add(source)
 
-    if source:
-        task = process_source_task.delay(current_user.id, source.id)
-        task_id = str(task.id)
-    else:
-        task_id = "already-processed"
-
     is_resuming = (
         file_record.extraction_status == "failed"
         and file_record.processed_chunks is not None
         and file_record.processed_chunks > 0
     )
 
+    # Commit the "queued" state BEFORE dispatching the task.
+    # If Celery runs in eager/synchronous mode the task executes inline inside
+    # .delay() and writes its own completion status via _update_matching_file.
+    # Committing first ensures those writes are never overwritten afterward.
+    import json
+    from ..utils.extraction.media import get_initial_steps
+    is_video = file_record.file_type == FileType.VIDEO
     file_record.extraction_status = "queued"
     file_record.extraction_error = None
     if not is_resuming:
@@ -146,14 +151,15 @@ def queue_media_transcription(
         file_record.processed_chunks = 0
         file_record.total_chunks = 0
         file_record.partial_transcript = None
-    
-    import json
-    from ..utils.extraction.media import get_initial_steps
-    is_video = file_record.file_type == FileType.VIDEO
     file_record.detailed_steps = json.dumps(get_initial_steps(is_video, processed_chunks=file_record.processed_chunks))
-    
     db.add(file_record)
     db.commit()
+
+    if source:
+        task = process_source_task.delay(current_user.id, source.id)
+        task_id = str(task.id)
+    else:
+        task_id = "already-processed"
 
     return FileJobResponse(
         file_id=file_record.id,
