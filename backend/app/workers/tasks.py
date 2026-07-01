@@ -218,6 +218,19 @@ def process_source_task(self, user_id: int, source_id: int):
             source.processing_error = str(exc)
             source.processing_progress = 100
             db.add(source)
+            
+            # Manually sync the failure to the matching File record so the UI reports the failure
+            from ..models.file import File
+            file_record = db.query(File).filter(
+                File.note_id == source.note_id,
+                File.file_url == source.public_url
+            ).first()
+            if file_record:
+                file_record.extraction_status = "failed"
+                file_record.progress_percent = 100
+                file_record.extraction_error = str(exc)
+                db.add(file_record)
+                
             db.commit()
         raise
     finally:
