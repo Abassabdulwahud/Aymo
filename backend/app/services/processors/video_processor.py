@@ -1,9 +1,9 @@
 import logging
 from sqlalchemy.orm import Session
 from .base import BaseSourceProcessor
+from .audio_processor import _SourceFileAdapter
 from ...models.source import Source
 from ...models.enums import SourceStatus
-from ...config import get_settings
 from ...utils.extraction.media import extract_video_content
 from ...utils.extraction.base import resolve_file_for_extraction
 
@@ -12,8 +12,6 @@ logger = logging.getLogger(__name__)
 
 class VideoProcessor(BaseSourceProcessor):
     def process(self, source: Source, db: Session) -> None:
-        settings = get_settings()
-        
         # 1. Update status to PROCESSING
         source.status = SourceStatus.PROCESSING
         source.processing_progress = 5
@@ -30,9 +28,21 @@ class VideoProcessor(BaseSourceProcessor):
             self.commit_and_sync(db, source)
             return
 
+        # 3. Resolve the matching File record — extract_video_content requires a File object
+        #    for session-backed progress tracking (processed_chunks, total_chunks, etc.)
+        from ...models.file import File
+        file_record = db.query(File).filter(
+            File.note_id == source.note_id,
+            File.file_url == source.public_url,
+        ).first()
+
+        if file_record is None:
+            # No matching File exists (upload went via the Sources API directly).
+            file_record = _SourceFileAdapter(source, db)
+
         try:
             logger.info("Transcribing video source %d", source.id)
-            result = extract_video_content(str(file_path), source)
+            result = extract_video_content(str(file_path), file_record)
             if result.status != "completed" or not result.content:
                 raise RuntimeError(result.error or "Video transcription returned empty content.")
         except Exception as exc:
@@ -50,14 +60,14 @@ class VideoProcessor(BaseSourceProcessor):
                 except Exception:
                     pass
 
-        # 3. Chunk and store chunks
+        # 4. Chunk and store chunks
         logger.info("Chunking and storing chunks for video source %d", source.id)
         self.chunk_and_store_media_source(db, source, result.content)
-        
+
         # Transition to PARTIALLY_READY
         source.status = SourceStatus.PARTIALLY_READY
         source.processing_progress = 90
         self.commit_and_sync(db, source)
 
-        # 4. Post-processing (embeddings + summary)
+        # 5. Post-processing (embeddings + summary)
         self.run_post_processing(db, source, result.content)
