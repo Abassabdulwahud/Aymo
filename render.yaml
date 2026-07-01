@@ -66,7 +66,7 @@ services:
 
       # ── Misc ───────────────────────────────────────────────────────────────
       - key: CELERY_TASK_ALWAYS_EAGER
-        value: "false"
+        value: "true"
 
   # ─── Celery Worker (optional — comment out if not using async processing) ──
   # - type: worker

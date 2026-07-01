@@ -26,8 +26,8 @@ from ..schemas.sources import (
     SourceProcessRequest,
 )
 from ..services.translation_service import translate
-from ..utils.storage import close_upload, detect_upload_file_type, save_upload_file
-from ..utils.extraction.base import file_path_from_uploads_root
+from ..storage import get_storage_provider
+from ..utils.storage import close_upload, detect_upload_file_type
 
 router = APIRouter(prefix="/api/protected", tags=["sources"])
 settings = get_settings()
@@ -55,21 +55,20 @@ def _validate_link_url(url: str, language_code: str) -> str:
     return str(url)
 
 
-def _delete_source_asset(public_url: Optional[str]) -> None:
-    if not public_url or not public_url.startswith(settings.uploads_base_url):
+def _delete_source_asset(source: Source) -> None:
+    """Delete the physical asset for a source using the storage provider."""
+    if not source.public_url:
         return
-
-    relative_parts = [part for part in public_url[len(settings.uploads_base_url):].split("/") if part]
-    file_path = Path(settings.uploads_dir).resolve().joinpath(*relative_parts)
-    if not file_path.exists():
+    # Links have no physical asset to delete
+    if source.source_type == SourceType.LINK:
         return
-
     try:
-        file_path.unlink()
-    except OSError as exc:
+        provider = get_storage_provider()
+        provider.delete(source.public_url, source.storage_key)
+    except Exception as exc:
         logger.warning(
-            "Could not remove uploaded file '%s': %s",
-            file_path,
+            "Could not remove uploaded asset for source %s: %s",
+            source.id,
             exc,
         )
 
@@ -137,14 +136,22 @@ def upload_note_source(
     except KeyError:
         source_type = SourceType.DOCUMENT
 
+    provider = get_storage_provider()
     try:
-        public_url, file_size = save_upload_file(upload, current_user.id, note_id)
+        public_url, file_size = provider.upload(upload, current_user.id, note_id)
     finally:
         close_upload(upload)
 
+    storage_key: Optional[str] = getattr(provider, "last_public_id", None)
+    provider_name: str = settings.file_storage_provider
+
+    # Duration extraction — only possible when the file is locally accessible
     duration_seconds = None
-    if source_type in {SourceType.AUDIO, SourceType.VIDEO}:
-        local_path = file_path_from_uploads_root(settings.uploads_dir, settings.uploads_base_url, public_url)
+    if source_type in {SourceType.AUDIO, SourceType.VIDEO} and provider_name == "local":
+        from ..utils.extraction.base import file_path_from_uploads_root
+        local_path = file_path_from_uploads_root(
+            settings.uploads_dir, settings.uploads_base_url, public_url
+        )
         if local_path and local_path.exists():
             duration_seconds = _extract_media_duration(local_path)
 
@@ -159,11 +166,14 @@ def upload_note_source(
         mime_type=upload.content_type,
         public_url=public_url,
         status=SourceStatus.UPLOADED,
+        storage_provider=provider_name,
+        storage_key=storage_key,
+        cdn_url=public_url if provider_name == "cloudinary" else None,
     )
     db.add(source_record)
     db.commit()
     db.refresh(source_record)
-    
+
     # Auto-trigger Celery processing task
     from ..workers.tasks import process_source_task
     process_source_task.delay(current_user.id, source_record.id)
@@ -197,7 +207,7 @@ def create_link_source(
     db.add(source_record)
     db.commit()
     db.refresh(source_record)
-    
+
     # Auto-trigger Celery processing task
     from ..workers.tasks import process_source_task
     process_source_task.delay(current_user.id, source_record.id)
@@ -257,7 +267,7 @@ def get_source_summary(
         .order_by(SourceSummary.created_at.desc())
         .first()
     )
-    
+
     if not summary:
         # If no summary exists yet and the source status is ready, generate it on demand
         if source.status == SourceStatus.READY:
@@ -266,7 +276,7 @@ def get_source_summary(
             db.commit()
         else:
             raise HTTPException(status_code=404, detail="Summary not ready or not found.")
-            
+
     return summary
 
 
@@ -279,7 +289,7 @@ def process_source(
     language_code: str = Depends(get_current_language),
 ):
     source = _get_source_or_404(db, current_user.id, id, language_code)
-    
+
     # If forced or failed, we clear previous progress/error/chunks and start over
     if payload.force or source.status == SourceStatus.FAILED:
         source.status = SourceStatus.UPLOADED
@@ -287,26 +297,26 @@ def process_source(
         source.processing_error = None
         source.summary = None
         source.keywords = None
-        
+
         # Reset adapter progress fields in cache
         from ..services.cache import cache_client
         cache_client.set_json(f"source:{source.id}:processed_chunks", {"value": 0}, 1)
         cache_client.set_json(f"source:{source.id}:total_chunks", {"value": 0}, 1)
         cache_client.set_json(f"source:{source.id}:detailed_steps", {"value": None}, 1)
         cache_client.set_json(f"source:{source.id}:partial_transcript", {"value": None}, 1)
-        
+
         # Clear database chunks, summaries, and embeddings
         db.query(SourceChunk).filter(SourceChunk.source_id == source.id).delete()
         db.query(SourceSummary).filter(SourceSummary.source_id == source.id).delete()
         from ..models.note_embedding import NoteEmbedding
         db.query(NoteEmbedding).filter(NoteEmbedding.source_id == source.id).delete()
-        
+
         db.add(source)
         db.commit()
 
     from ..workers.tasks import process_source_task
     process_source_task.delay(current_user.id, source.id)
-    
+
     db.refresh(source)
     return source
 
@@ -319,17 +329,17 @@ def resume_source(
     language_code: str = Depends(get_current_language),
 ):
     source = _get_source_or_404(db, current_user.id, id, language_code)
-    
+
     if source.status != SourceStatus.FAILED:
         # Only allow resuming if it was failed/partial
         raise HTTPException(
             status_code=400,
-            detail=f"Source is currently in {source.status.value} state, cannot resume."
+            detail=f"Source is currently in {source.status.value} state, cannot resume.",
         )
 
     from ..workers.tasks import process_source_task
     process_source_task.delay(current_user.id, source.id)
-    
+
     return source
 
 
@@ -341,14 +351,14 @@ def delete_source(
     language_code: str = Depends(get_current_language),
 ):
     source = _get_source_or_404(db, current_user.id, id, language_code)
-    
+
     # 1. Delete physical upload asset if it exists
-    _delete_source_asset(source.public_url)
-    
+    _delete_source_asset(source)
+
     # 2. Delete database record (cascading deletes for chunks, summaries, note_embeddings)
     db.delete(source)
     db.commit()
-    
+
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     response.headers["X-AYMO-Message"] = translate(language_code, "file_deleted")
     return response

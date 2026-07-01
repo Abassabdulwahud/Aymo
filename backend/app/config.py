@@ -68,6 +68,12 @@ class Settings:
     deepseek_model: str
     transcription_provider: str
     transcription_model: str
+    # Storage provider
+    file_storage_provider: str
+    cloudinary_cloud_name: Optional[str]
+    cloudinary_api_key: Optional[str]
+    cloudinary_api_secret: Optional[str]
+    cloudinary_folder: Optional[str]
 
 
 def _resolve_jwt_secret_key(app_env: str) -> str:
@@ -137,4 +143,9 @@ def get_settings() -> Settings:
         deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
         transcription_provider=os.getenv("TRANSCRIPTION_PROVIDER", "faster_whisper"),
         transcription_model=os.getenv("TRANSCRIPTION_MODEL", "small"),
+        file_storage_provider=os.getenv("FILE_STORAGE_PROVIDER", "local").strip().lower(),
+        cloudinary_cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+        cloudinary_api_key=os.getenv("CLOUDINARY_API_KEY"),
+        cloudinary_api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+        cloudinary_folder=os.getenv("CLOUDINARY_FOLDER", "aymo"),
     )

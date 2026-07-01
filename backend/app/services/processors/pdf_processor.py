@@ -5,7 +5,7 @@ from ...models.source import Source
 from ...models.enums import SourceStatus
 from ...config import get_settings
 from ...utils.extraction.pdfs import extract_pdf_content
-from ...utils.extraction.base import file_path_from_uploads_root
+from ...utils.extraction.base import resolve_file_for_extraction
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class PdfProcessor(BaseSourceProcessor):
         self.commit_and_sync(db, source)
 
         # 2. Extract PDF content
-        file_path = file_path_from_uploads_root(settings.uploads_dir, settings.uploads_base_url, source.public_url)
+        file_path, is_temp = resolve_file_for_extraction(source.public_url, source.storage_key)
         if not file_path or not file_path.exists():
             err_msg = "The stored PDF file could not be found."
             logger.error(err_msg)
@@ -48,6 +48,12 @@ class PdfProcessor(BaseSourceProcessor):
             source.processing_error = err_msg
             self.commit_and_sync(db, source)
             return
+        finally:
+            if is_temp and file_path and file_path.exists():
+                try:
+                    file_path.unlink()
+                except Exception:
+                    pass
 
         source.processing_progress = 50
         self.commit_and_sync(db, source)

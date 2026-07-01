@@ -88,6 +88,10 @@ def run_migrations():
 
 @app.on_event("startup")
 def warm_embedding_model():
+    # Instantiate the storage provider at startup to trigger validation early
+    from .storage import get_storage_provider
+    get_storage_provider()
+
     run_migrations()
     initialize_translations()
     initialize_embedding_model()
@@ -97,20 +101,4 @@ def warm_embedding_model():
 
 @app.get("/health")
 def health():
-    tables = []
-    error = None
-    try:
-        from .database import SessionLocal
-        db = SessionLocal()
-        from sqlalchemy import inspect
-        inspector = inspect(db.bind)
-        tables = inspector.get_table_names()
-        db.close()
-    except Exception as e:
-        error = str(e)
-    return {
-        "status": "ok",
-        "environment": settings.app_env,
-        "tables": tables,
-        "error": error
-    }
+    return {"status": "ok", "environment": settings.app_env}

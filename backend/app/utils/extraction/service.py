@@ -1,9 +1,8 @@
 from datetime import datetime, timezone
-
 from ...config import get_settings
 from ...models.enums import FileType
 from ...models.file import File
-from .base import ExtractionResult, file_path_from_uploads_root
+from .base import ExtractionResult, resolve_file_for_extraction
 from .documents import extract_document_content
 from .images import extract_image_content
 from .links import extract_link_content
@@ -16,36 +15,28 @@ settings = get_settings()
 def extract_file_content(file_record: File) -> ExtractionResult:
     if file_record.file_type == FileType.LINK:
         result = extract_link_content(file_record.file_url)
-    elif file_record.file_type == FileType.PDF:
-        file_path = file_path_from_uploads_root(settings.uploads_dir, settings.uploads_base_url, file_record.file_url)
+    elif file_record.file_type in {FileType.PDF, FileType.DOCUMENT, FileType.IMAGE, FileType.VIDEO, FileType.AUDIO}:
+        file_path, is_temp = resolve_file_for_extraction(file_record.file_url, file_record.storage_key)
         if not file_path or not file_path.exists():
-            result = ExtractionResult(status="failed", content=None, error="The stored PDF file could not be found.")
+            result = ExtractionResult(status="failed", content=None, error=f"The stored {file_record.file_type.value} file could not be found.")
         else:
-            result = extract_pdf_content(file_path)
-    elif file_record.file_type == FileType.DOCUMENT:
-        file_path = file_path_from_uploads_root(settings.uploads_dir, settings.uploads_base_url, file_record.file_url)
-        if not file_path or not file_path.exists():
-            result = ExtractionResult(status="failed", content=None, error="The stored document file could not be found.")
-        else:
-            result = extract_document_content(file_path)
-    elif file_record.file_type == FileType.IMAGE:
-        file_path = file_path_from_uploads_root(settings.uploads_dir, settings.uploads_base_url, file_record.file_url)
-        if not file_path or not file_path.exists():
-            result = ExtractionResult(status="failed", content=None, error="The stored image file could not be found.")
-        else:
-            result = extract_image_content(file_path, file_record.file_url)
-    elif file_record.file_type == FileType.VIDEO:
-        file_path = file_path_from_uploads_root(settings.uploads_dir, settings.uploads_base_url, file_record.file_url)
-        if not file_path or not file_path.exists():
-            result = ExtractionResult(status="failed", content=None, error="The stored video file could not be found.")
-        else:
-            result = extract_video_content(str(file_path), file_record)
-    elif file_record.file_type == FileType.AUDIO:
-        file_path = file_path_from_uploads_root(settings.uploads_dir, settings.uploads_base_url, file_record.file_url)
-        if not file_path or not file_path.exists():
-            result = ExtractionResult(status="failed", content=None, error="The stored audio file could not be found.")
-        else:
-            result = extract_audio_content(str(file_path), file_record)
+            try:
+                if file_record.file_type == FileType.PDF:
+                    result = extract_pdf_content(file_path)
+                elif file_record.file_type == FileType.DOCUMENT:
+                    result = extract_document_content(file_path)
+                elif file_record.file_type == FileType.IMAGE:
+                    result = extract_image_content(file_path, file_record.file_url)
+                elif file_record.file_type == FileType.VIDEO:
+                    result = extract_video_content(str(file_path), file_record)
+                elif file_record.file_type == FileType.AUDIO:
+                    result = extract_audio_content(str(file_path), file_record)
+            finally:
+                if is_temp and file_path and file_path.exists():
+                    try:
+                        file_path.unlink()
+                    except Exception:
+                        pass
     else:
         result = ExtractionResult(status="failed", content=None, error="Unsupported file type for extraction.")
 

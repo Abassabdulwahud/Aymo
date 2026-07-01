@@ -16,8 +16,9 @@ from ..repositories.scoped_queries import file_for_user, files_for_user, note_fo
 from ..services.file_processing import extract_file_and_store
 from ..schemas.files import FileExtractRequest, FileExtractResponse, FileListResponse, FileResponse, LinkCreate
 from ..services.translation_service import translate
+from ..storage import get_storage_provider
 from ..utils.extraction import extract_file_content
-from ..utils.storage import close_upload, detect_upload_file_type, save_upload_file
+from ..utils.storage import close_upload, detect_upload_file_type
 
 router = APIRouter(prefix="/api/protected", tags=["files"])
 settings = get_settings()
@@ -46,20 +47,15 @@ def _validate_link_url(url: str, language_code: str) -> str:
 
 
 def _delete_uploaded_asset(file_record: File) -> None:
-    if file_record.file_type == FileType.LINK or not file_record.file_url.startswith(settings.uploads_base_url):
+    """Delete the physical asset for a file using the storage provider."""
+    if file_record.file_type == FileType.LINK:
         return
-
-    relative_parts = [part for part in file_record.file_url[len(settings.uploads_base_url):].split("/") if part]
-    file_path = Path(settings.uploads_dir).resolve().joinpath(*relative_parts)
-    if not file_path.exists():
-        return
-
     try:
-        file_path.unlink()
-    except OSError as exc:
+        provider = get_storage_provider()
+        provider.delete(file_record.file_url, file_record.storage_key)
+    except Exception as exc:
         logger.warning(
-            "Could not remove uploaded file '%s' while deleting database record %s: %s",
-            file_path,
+            "Could not remove uploaded asset for file record %s: %s",
             file_record.id,
             exc,
         )
@@ -124,13 +120,20 @@ def upload_note_file(
     _get_note_or_404(db, current_user.id, note_id, language_code)
 
     file_type = detect_upload_file_type(upload)
+
+    provider = get_storage_provider()
     try:
-        public_url, file_size = save_upload_file(upload, current_user.id, note_id)
+        public_url, file_size = provider.upload(upload, current_user.id, note_id)
     finally:
         close_upload(upload)
 
+    # Grab any provider-specific metadata (e.g. Cloudinary public_id)
+    storage_key: Optional[str] = getattr(provider, "last_public_id", None)
+    provider_name: str = settings.file_storage_provider
+
+    # Duration extraction — only possible when the file is locally accessible
     duration_seconds = None
-    if file_type in {FileType.AUDIO, FileType.VIDEO}:
+    if file_type in {FileType.AUDIO, FileType.VIDEO} and provider_name == "local":
         from ..utils.extraction.base import file_path_from_uploads_root
         local_path = file_path_from_uploads_root(settings.uploads_dir, settings.uploads_base_url, public_url)
         if local_path and local_path.exists():
@@ -144,6 +147,9 @@ def upload_note_file(
         file_url=public_url,
         file_size=file_size,
         duration_seconds=duration_seconds,
+        storage_provider=provider_name,
+        storage_key=storage_key,
+        cdn_url=public_url if provider_name == "cloudinary" else None,
     )
     db.add(file_record)
     db.commit()
@@ -175,6 +181,9 @@ def upload_note_file(
             mime_type=upload.content_type,
             public_url=public_url,
             status=SourceStatus.UPLOADED,
+            storage_provider=provider_name,
+            storage_key=storage_key,
+            cdn_url=public_url if provider_name == "cloudinary" else None,
         )
         db.add(source_record)
         db.commit()

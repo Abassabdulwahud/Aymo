@@ -29,6 +29,10 @@ class Source(Base):
     mime_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     storage_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     public_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+    # Storage-provider metadata — NULL for records created before this feature.
+    storage_provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    storage_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    cdn_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
     content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     status: Mapped[SourceStatus] = mapped_column(
         SqlEnum(SourceStatus, name="source_status_enum", values_callable=_enum_values),

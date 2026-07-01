@@ -16,4 +16,5 @@ celery_app.conf.update(
     result_serializer="json",
     task_track_started=True,
     result_expires=3600,
+    imports=["app.workers.tasks"],
 )

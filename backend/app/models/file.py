@@ -25,6 +25,10 @@ class File(Base):
     )
     file_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    # Storage-provider metadata — NULL for records created before this feature.
+    storage_provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    storage_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    cdn_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
     content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     extracted_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

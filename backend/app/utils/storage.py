@@ -1,15 +1,18 @@
+"""
+Storage utilities — provider-agnostic helpers shared by all upload routes.
+
+save_upload_file()       — thin shim that delegates to the active StorageProvider.
+detect_upload_file_type()— classifies an UploadFile by extension / MIME type.
+close_upload()           — safely closes the UploadFile stream.
+
+The concrete upload implementation lives in app/storage/.
+"""
 from pathlib import Path
 from typing import Tuple
-from uuid import uuid4
-import shutil
 
 from fastapi import HTTPException, UploadFile
-from PIL import Image
 
-from ..config import get_settings
 from ..models.enums import FileType
-
-settings = get_settings()
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
@@ -25,11 +28,6 @@ _DOCUMENT_EXTENSIONS = {
     ".rtf",
     ".md",
 }
-
-
-def _sanitize_filename(filename: str) -> str:
-    cleaned = "".join(character for character in filename if character.isalnum() or character in {"-", "_", "."})
-    return cleaned or "upload"
 
 
 def detect_upload_file_type(upload: UploadFile) -> FileType:
@@ -54,42 +52,25 @@ def detect_upload_file_type(upload: UploadFile) -> FileType:
     }:
         return FileType.DOCUMENT
 
-    raise HTTPException(status_code=400, detail="Unsupported file type. Use image, PDF, document, video, or audio files.")
-
-
-def _compress_image_file(source_path: Path) -> None:
-    with Image.open(source_path) as image:
-        image.thumbnail((settings.image_max_dimension, settings.image_max_dimension))
-        save_kwargs = {"optimize": True}
-        image_format = (image.format or source_path.suffix.lstrip(".") or "PNG").upper()
-        if image_format in {"JPG", "JPEG", "WEBP"}:
-            if image.mode not in {"RGB", "L"}:
-                image = image.convert("RGB")
-            save_kwargs["quality"] = settings.image_quality
-        image.save(source_path, format=image_format, **save_kwargs)
+    raise HTTPException(
+        status_code=400,
+        detail="Unsupported file type. Use image, PDF, document, video, or audio files.",
+    )
 
 
 def save_upload_file(upload: UploadFile, user_id: int, note_id: int) -> Tuple[str, int]:
-    uploads_root = Path(settings.uploads_dir).resolve()
-    target_dir = uploads_root / f"user-{user_id}" / f"note-{note_id}"
-    target_dir.mkdir(parents=True, exist_ok=True)
+    """
+    Persist an uploaded file via the active storage provider.
 
-    original_name = _sanitize_filename(upload.filename or "upload")
-    stored_name = f"{uuid4().hex}-{original_name}"
-    target_path = target_dir / stored_name
+    Returns (public_url, file_size_bytes).
 
-    upload.file.seek(0)
-    with target_path.open("wb") as destination:
-        shutil.copyfileobj(upload.file, destination)
-
-    file_type = detect_upload_file_type(upload)
-    if file_type == FileType.IMAGE:
-        _compress_image_file(target_path)
-
-    relative_path = target_path.relative_to(uploads_root).as_posix()
-    public_url = f"{settings.uploads_base_url.rstrip('/')}/{relative_path}"
-    file_size = target_path.stat().st_size
-    return public_url, file_size
+    This function is kept for backward compatibility.  All new code should
+    import get_storage_provider() from app.storage directly and call
+    provider.upload() so the public_id (storage_key) is also accessible.
+    """
+    from ..storage import get_storage_provider
+    provider = get_storage_provider()
+    return provider.upload(upload, user_id, note_id)
 
 
 def close_upload(upload: UploadFile) -> None:
