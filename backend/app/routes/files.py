@@ -191,7 +191,10 @@ def upload_note_file(
 
         # Auto-queue the source for processing
         from ..workers.tasks import process_source_task
-        process_source_task.delay(current_user.id, source_record.id)
+        # ── DIAGNOSTIC ONLY ── bypass Celery queue, run synchronously in the web process.
+        # If processing succeeds here, the root cause is a missing/broken Celery worker.
+        # Revert this line back to  process_source_task.delay(...)  after diagnosis.
+        process_source_task.apply(args=[current_user.id, source_record.id])
     except Exception as exc:
         # Dual-write is best-effort — never block the original File upload
         logger.warning("Failed to dual-write Source for file %d: %s", file_record.id, exc)
