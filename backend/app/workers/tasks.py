@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -11,6 +12,8 @@ from ..services.embeddings import replace_note_embeddings
 from ..services.file_processing import extract_file_and_store, get_file_or_none, store_media_transcript
 from ..utils.extraction.links import extract_link_content
 from .celery_app import celery_app
+
+logger = logging.getLogger(__name__)
 
 
 def _update_file_failure(db: Session, file_record: File, message: str) -> None:
@@ -182,11 +185,59 @@ def rebuild_note_embeddings_task(
         db.close()
 
 
+def _mark_source_failed(source_id: int, user_id: int, error_message: str) -> None:
+    """
+    Mark a Source as FAILED in the DB and sync the error to the matching File record.
+    Called from the Celery failure hook to handle worker-process crashes (OOM/SIGKILL)
+    that leave the Source stuck at QUEUED because the normal except block never ran.
+    """
+    from ..models.source import Source
+    from ..models.enums import SourceStatus
+    from ..models.file import File
+
+    db = SessionLocal()
+    try:
+        source = db.query(Source).filter(Source.id == source_id, Source.user_id == user_id).first()
+        if source is None:
+            return
+        # Only overwrite if still stuck in a transient state
+        if source.status not in (SourceStatus.READY, SourceStatus.FAILED):
+            source.status = SourceStatus.FAILED
+            source.processing_error = error_message
+            source.processing_progress = 100
+            db.add(source)
+
+            file_record = db.query(File).filter(
+                File.note_id == source.note_id,
+                File.file_url == source.public_url,
+            ).first()
+            if file_record and file_record.extraction_status not in ("completed", "failed"):
+                file_record.extraction_status = "failed"
+                file_record.progress_percent = 100
+                file_record.extraction_error = error_message
+                db.add(file_record)
+
+            db.commit()
+            logger.error(
+                "process_source_task permanently failed for source %d (user %d): %s",
+                source_id, user_id, error_message,
+            )
+    except Exception as inner_exc:
+        logger.error("_mark_source_failed also failed for source %d: %s", source_id, inner_exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
 @celery_app.task(
     bind=True,
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 3},
+    acks_late=True,          # Don't ack until task finishes — prevents task loss on SIGKILL
     name="app.workers.tasks.process_source_task",
 )
 def process_source_task(self, user_id: int, source_id: int):
@@ -207,31 +258,42 @@ def process_source_task(self, user_id: int, source_id: int):
         # Get processor
         processor = get_processor(source.source_type)
         processor.process(source, db)
-        
+
         return {"status": "completed", "source_id": source_id}
     except Exception as exc:
         db.rollback()
-        # Reload source to update status to FAILED
-        source = db.query(Source).filter(Source.id == source_id, Source.user_id == user_id).first()
-        if source is not None:
-            source.status = SourceStatus.FAILED
-            source.processing_error = str(exc)
-            source.processing_progress = 100
-            db.add(source)
-            
-            # Manually sync the failure to the matching File record so the UI reports the failure
-            from ..models.file import File
-            file_record = db.query(File).filter(
-                File.note_id == source.note_id,
-                File.file_url == source.public_url
-            ).first()
-            if file_record:
-                file_record.extraction_status = "failed"
-                file_record.progress_percent = 100
-                file_record.extraction_error = str(exc)
-                db.add(file_record)
-                
-            db.commit()
+        # Check if this is the FINAL retry — if so, permanently mark as FAILED
+        if self.request.retries >= self.max_retries:
+            _mark_source_failed(source_id, user_id, str(exc))
+        else:
+            # Transient failure — still update to FAILED so UI shows error immediately,
+            # but allow Celery to retry the task
+            try:
+                source = db.query(Source).filter(Source.id == source_id, Source.user_id == user_id).first()
+                if source is not None:
+                    source.status = SourceStatus.FAILED
+                    source.processing_error = str(exc)
+                    source.processing_progress = 100
+                    db.add(source)
+
+                    from ..models.file import File
+                    file_record = db.query(File).filter(
+                        File.note_id == source.note_id,
+                        File.file_url == source.public_url
+                    ).first()
+                    if file_record:
+                        file_record.extraction_status = "failed"
+                        file_record.progress_percent = 100
+                        file_record.extraction_error = str(exc)
+                        db.add(file_record)
+
+                    db.commit()
+            except Exception as sync_exc:
+                logger.error("Failed to sync FAILED state for source %d: %s", source_id, sync_exc)
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
         raise
     finally:
         db.close()

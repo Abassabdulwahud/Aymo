@@ -24,8 +24,54 @@ def format_timestamp(seconds: float) -> str:
     return f"[{hours:02d}:{minutes:02d}:{secs:02d}]"
 
 
-def update_file_progress(file_record: File, progress: int, status: str, error: str = None, steps: list = None) -> None:
+# ---------------------------------------------------------------------------
+# Internal helpers that support both real File ORM objects and
+# the _SourceFileAdapter shim used when no matching File row exists.
+# ---------------------------------------------------------------------------
+
+def _get_db(file_record):
+    """
+    Return the SQLAlchemy session associated with file_record.
+
+    Works for:
+      * Real File ORM instances  → object_session(file_record)
+      * _SourceFileAdapter shims → file_record._db
+    """
     db = object_session(file_record)
+    if db is None:
+        db = getattr(file_record, '_db', None)
+    return db
+
+
+def _save_record(db, file_record) -> None:
+    """
+    Persist pending changes in file_record to the database.
+
+    Real ORM objects   → db.add() + db.commit() + db.refresh()
+    Adapter shims      → just db.commit() (add/refresh are unsupported)
+    """
+    if db is None:
+        return
+    try:
+        is_orm = object_session(file_record) is not None
+        if is_orm:
+            db.add(file_record)
+        db.commit()
+        if is_orm:
+            try:
+                db.refresh(file_record)
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("Could not persist file record to DB: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Public helpers
+# ---------------------------------------------------------------------------
+
+def update_file_progress(file_record: File, progress: int, status: str, error: str = None, steps: list = None) -> None:
+    db = _get_db(file_record)
     if db:
         try:
             file_record.progress_percent = progress
@@ -34,9 +80,7 @@ def update_file_progress(file_record: File, progress: int, status: str, error: s
                 file_record.extraction_error = error
             if steps is not None:
                 file_record.detailed_steps = json.dumps(steps)
-            db.add(file_record)
-            db.commit()
-            db.refresh(file_record)
+            _save_record(db, file_record)
         except Exception as exc:
             logger.warning("Could not write progress update to DB: %s", exc)
 
@@ -65,14 +109,15 @@ def set_step_status(steps: list, name: str, status: str) -> list:
 
 def process_media_file(file_path: str, file_record: File, is_video: bool) -> ExtractionResult:
     settings = get_settings()
-    db = object_session(file_record)
-    
+    # Support both real ORM File objects and _SourceFileAdapter shims
+    db = _get_db(file_record)
+
     # Check if we are resuming from a previous failure
     start_chunk_idx = file_record.processed_chunks or 0
     is_resume = start_chunk_idx > 0
-    
+
     steps = get_initial_steps(is_video, processed_chunks=start_chunk_idx)
-    
+
     # Configure pytesseract path if present
     if settings.tesseract_cmd:
         pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
@@ -93,12 +138,12 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
     # Create temporary directory for chunks and frames
     with tempfile.TemporaryDirectory() as temp_dir:
         audio_path = os.path.join(temp_dir, "extracted_audio.wav")
-        
+
         # 1. Extract audio (always run on startup/resumption to generate wav file)
         if not is_resume:
             steps = set_step_status(steps, "Extracting Audio", "processing")
             update_file_progress(file_record, 15, "processing", steps=steps)
-        
+
         try:
             logger.info("Extracting audio from %s to %s", file_path, audio_path)
             subprocess.run(
@@ -121,7 +166,7 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
         if not is_resume:
             steps = set_step_status(steps, "Segmenting Audio", "processing")
             update_file_progress(file_record, 30, "processing", steps=steps)
-        
+
         chunk_pattern = os.path.join(temp_dir, "chunk_%03d.wav")
         try:
             subprocess.run(
@@ -150,9 +195,7 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
 
         # Save total_chunks to database
         file_record.total_chunks = total_chunks
-        if db:
-            db.add(file_record)
-            db.commit()
+        _save_record(db, file_record)
 
         # Parse existing partial transcript if resuming
         ocr_texts = []
@@ -173,7 +216,7 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
         if is_video and not is_resume:
             steps = set_step_status(steps, "Extracting Keyframes", "processing")
             update_file_progress(file_record, 40, "processing", steps=steps)
-            
+
             frame_pattern = os.path.join(temp_dir, "keyframe_%03d.jpg")
             try:
                 # Extract one frame every 3 minutes (1/180 fps)
@@ -186,19 +229,19 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
                 steps = set_step_status(steps, "Extracting Keyframes", "completed")
                 steps = set_step_status(steps, "Running OCR on Slides", "processing")
                 update_file_progress(file_record, 45, "processing", steps=steps)
-                
+
                 frame_files = sorted([
                     f for f in os.listdir(temp_dir)
                     if f.startswith("keyframe_") and f.endswith(".jpg")
                 ])
-                
+
                 for f_idx, f_name in enumerate(frame_files):
                     frame_path = os.path.join(temp_dir, f_name)
                     idx_match = re.search(r"keyframe_(\d+)\.jpg", f_name)
                     if idx_match:
                         frame_index = int(idx_match.group(1)) - 1
                         timestamp_sec = frame_index * 180
-                        
+
                         try:
                             logger.info("Running OCR on frame %s at %d seconds", f_name, timestamp_sec)
                             img = Image.open(frame_path)
@@ -211,7 +254,7 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
                                 })
                         except Exception as ocr_exc:
                             logger.warning("OCR failed for %s: %s", f_name, ocr_exc)
-                
+
                 steps = set_step_status(steps, "Running OCR on Slides", "completed")
                 update_file_progress(file_record, 50, "processing", steps=steps)
             except Exception as exc:
@@ -232,7 +275,7 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
         for idx in range(start_chunk_idx, total_chunks):
             chunk_path = chunk_files[idx]
             chunk_base_sec = idx * 600
-            
+
             # Update detailed step title to show current progress
             steps = set_step_status(
                 steps,
@@ -240,22 +283,19 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
                 f"processing (Chunk {idx + 1}/{total_chunks})"
             )
             prog_val = 55 + int(((idx + 1) / total_chunks) * 35)
-            
+
             # Save intermediate chunk progress and total progress state in DB before transcribing
             file_record.processed_chunks = idx
             file_record.progress_percent = prog_val
             file_record.detailed_steps = json.dumps(steps)
-            if db:
-                db.add(file_record)
-                db.commit()
-                db.refresh(file_record)
+            _save_record(db, file_record)
 
             try:
-                logger.info("Transcribing chunk %d/%d (%s) using provider: %s", 
+                logger.info("Transcribing chunk %d/%d (%s) using provider: %s",
                             idx + 1, total_chunks, chunk_path, provider.__class__.__name__)
-                
+
                 res_data = provider.transcribe(chunk_path)
-                
+
                 segments = res_data.get("segments", [])
                 for seg in segments:
                     start_time = chunk_base_sec + seg.get("start", 0)
@@ -273,10 +313,7 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
                     "ocr_texts": ocr_texts,
                     "transcript_segments": transcript_segments
                 })
-                if db:
-                    db.add(file_record)
-                    db.commit()
-                    db.refresh(file_record)
+                _save_record(db, file_record)
 
                 update_file_progress(file_record, prog_val, "processing", steps=steps)
 
@@ -306,7 +343,7 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
             merged_content_blocks.append(text_val)
 
         final_content = "\n\n".join(merged_content_blocks).strip()
-        
+
         if not final_content:
             err_msg = "Transcription yielded an empty output."
             update_file_progress(file_record, 90, "failed", error=err_msg, steps=steps)
@@ -315,16 +352,14 @@ def process_media_file(file_path: str, file_record: File, is_video: bool) -> Ext
         # Successful extraction result
         steps = set_step_status(steps, "Generating Semantic Embeddings", "completed")
         update_file_progress(file_record, 95, "processing", steps=steps)
-        
+
         # Clear partial progress metadata on completion
         file_record.processed_chunks = total_chunks
         file_record.partial_transcript = None
-        if db:
-            db.add(file_record)
-            db.commit()
+        _save_record(db, file_record)
 
         logger.info("Successfully extracted audio and OCR from media record %d.", file_record.id)
-        
+
         return ExtractionResult(
             status="completed",
             content=final_content,

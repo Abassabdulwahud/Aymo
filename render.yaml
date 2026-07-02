@@ -102,3 +102,13 @@ services:
           property: connectionString
       - key: CELERY_TASK_ALWAYS_EAGER
         value: "false"
+      # ── Transcription: use OpenAI Whisper API (no local model download on worker) ──
+      - key: TRANSCRIPTION_PROVIDER
+        value: openai
+      - key: TRANSCRIPTION_MODEL
+        value: whisper-1
+      # ── Uploads dir (mirrors web service) ─────────────────────────────────────
+      - key: UPLOADS_DIR
+        value: /opt/render/project/src/uploads
+      - key: UPLOADS_BASE_URL
+        value: /uploads
