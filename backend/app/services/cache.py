@@ -43,7 +43,12 @@ class CacheClient:
         if not settings.redis_url or redis is None:
             return None
         try:
-            return redis.Redis.from_url(settings.redis_url, decode_responses=True)
+            return redis.Redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_timeout=10,          # raises TimeoutError if a command hangs >10s
+                socket_connect_timeout=5,   # raises TimeoutError if connect takes >5s
+            )
         except Exception:
             return None
 

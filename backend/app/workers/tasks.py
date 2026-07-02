@@ -247,20 +247,28 @@ def process_source_task(self, user_id: int, source_id: int):
 
     db = SessionLocal()
     try:
+        logger.info("[DIAG] process_source_task STARTED — source_id=%s user_id=%s", source_id, user_id)
         source = db.query(Source).filter(Source.id == source_id, Source.user_id == user_id).first()
         if source is None:
+            logger.warning("[DIAG] source %s not found — aborting", source_id)
             return {"status": "missing"}
 
+        logger.info("[DIAG] source %s loaded — type=%s current_status=%s", source_id, source.source_type, source.status)
         source.status = SourceStatus.QUEUED
         db.add(source)
         db.commit()
+        logger.info("[DIAG] source %s QUEUED committed to DB", source_id)
 
         # Get processor
+        logger.info("[DIAG] source %s — calling get_processor(%s)", source_id, source.source_type)
         processor = get_processor(source.source_type)
+        logger.info("[DIAG] source %s — got processor %s — calling processor.process()", source_id, type(processor).__name__)
         processor.process(source, db)
+        logger.info("[DIAG] source %s — processor.process() returned successfully", source_id)
 
         return {"status": "completed", "source_id": source_id}
     except Exception as exc:
+        logger.exception("[DIAG] source %s — EXCEPTION in process_source_task: %s", source_id, exc)
         db.rollback()
         # Check if this is the FINAL retry — if so, permanently mark as FAILED
         if self.request.retries >= self.max_retries:
@@ -288,8 +296,10 @@ def process_source_task(self, user_id: int, source_id: int):
                         db.add(file_record)
 
                     db.commit()
+                    logger.info("[DIAG] source %s — FAILED state committed (retry %s/%s)",
+                                source_id, self.request.retries, self.max_retries)
             except Exception as sync_exc:
-                logger.error("Failed to sync FAILED state for source %d: %s", source_id, sync_exc)
+                logger.error("[DIAG] source %s — Failed to sync FAILED state: %s", source_id, sync_exc)
                 try:
                     db.rollback()
                 except Exception:

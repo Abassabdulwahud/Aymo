@@ -68,26 +68,40 @@ class BaseSourceProcessor(ABC):
 
     def _update_matching_file(self, db: Session, source: Source) -> None:
         from ...models.file import File
+        logger.info("[DIAG] _update_matching_file start — source_id=%s note_id=%s url=%s",
+                    source.id, source.note_id, source.public_url)
         file_record = db.query(File).filter(
             File.note_id == source.note_id,
             File.file_url == source.public_url
         ).first()
         if file_record:
+            logger.info("[DIAG] _update_matching_file found File id=%s — syncing fields", file_record.id)
             file_record.extraction_status = source.extraction_status
             file_record.progress_percent = source.processing_progress
             file_record.extraction_error = source.processing_error
+            logger.info("[DIAG] _update_matching_file reading source.detailed_steps (Redis)")  
             file_record.detailed_steps = source.detailed_steps
+            logger.info("[DIAG] _update_matching_file reading source.processed_chunks (Redis)")
             file_record.processed_chunks = source.processed_chunks
+            logger.info("[DIAG] _update_matching_file reading source.total_chunks (Redis)")
             file_record.total_chunks = source.total_chunks
+            logger.info("[DIAG] _update_matching_file reading source.partial_transcript (Redis)")
             file_record.partial_transcript = source.partial_transcript
             if source.duration_seconds is not None:
                 file_record.duration_seconds = source.duration_seconds
             db.add(file_record)
+            logger.info("[DIAG] _update_matching_file done syncing File id=%s", file_record.id)
+        else:
+            logger.warning("[DIAG] _update_matching_file NO File found for note_id=%s url=%s",
+                           source.note_id, source.public_url)
 
     def commit_and_sync(self, db: Session, source: Source) -> None:
+        logger.info("[DIAG] commit_and_sync called — source_id=%s status=%s progress=%s",
+                    source.id, source.status, source.processing_progress)
         db.add(source)
         self._update_matching_file(db, source)
         db.commit()
+        logger.info("[DIAG] commit_and_sync DB commit done — source_id=%s", source.id)
 
     def run_post_processing(self, db: Session, source: Source, content_text: str) -> None:
         try:
