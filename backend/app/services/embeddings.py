@@ -33,6 +33,11 @@ def get_embedding_model():
 
 
 def initialize_embedding_model() -> None:
+    from ..config import get_settings
+    settings = get_settings()
+    if settings.openai_api_key:
+        logger.info("OpenAI API key configured. Bypassing local SentenceTransformer initialization to save memory.")
+        return
     try:
         get_embedding_model()
         logger.info("Embedding model %s initialized.", EMBEDDING_MODEL_NAME)
@@ -118,6 +123,31 @@ def chunk_media_transcript(value: str) -> List[str]:
 def embed_texts(texts: Sequence[str]) -> List[List[float]]:
     if not texts:
         return []
+
+    from ..config import get_settings
+    import requests
+    settings = get_settings()
+
+    if settings.openai_api_key:
+        logger.info("Generating embeddings using OpenAI API (model: text-embedding-3-small, dim: %d) for %d texts",
+                    EMBEDDING_DIMENSION, len(texts))
+        try:
+            headers = {
+                "Authorization": f"Bearer {settings.openai_api_key}",
+                "Content-Type": "application/json"
+            }
+            url = "https://api.openai.com/v1/embeddings"
+            data = {
+                "input": list(texts),
+                "model": "text-embedding-3-small",
+                "dimensions": EMBEDDING_DIMENSION
+            }
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+            response.raise_for_status()
+            res_data = response.json()
+            return [item["embedding"] for item in res_data["data"]]
+        except Exception as exc:
+            logger.warning("OpenAI embedding API failed, falling back to local SentenceTransformer: %s", exc)
 
     model = get_embedding_model()
     vectors = model.encode(list(texts), normalize_embeddings=True)
