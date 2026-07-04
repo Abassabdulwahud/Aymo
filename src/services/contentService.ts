@@ -31,21 +31,6 @@ export async function queuePdfExtraction(token: string, fileId: number): Promise
   });
 }
 
-export async function queueMediaTranscription(
-  token: string,
-  fileId: number,
-  payload?: { duration_seconds?: number; transcript_text?: string },
-): Promise<FileJobResponse> {
-  return apiRequest<FileJobResponse>("/api/protected/files/transcribe-audio", {
-    method: "POST",
-    token,
-    body: {
-      file_id: fileId,
-      duration_seconds: payload?.duration_seconds,
-      transcript_text: payload?.transcript_text,
-    },
-  });
-}
 
 export async function queueLinkScrape(token: string, fileId: number): Promise<FileJobResponse> {
   return apiRequest<FileJobResponse>("/api/protected/files/scrape-link", {

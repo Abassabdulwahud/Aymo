@@ -9,7 +9,7 @@ from ..models.enums import FileType
 from ..models.file import File
 from ..services.content_store import upsert_extracted_content
 from ..services.embeddings import replace_note_embeddings
-from ..services.file_processing import extract_file_and_store, get_file_or_none, store_media_transcript
+from ..services.file_processing import extract_file_and_store, get_file_or_none
 from ..utils.extraction.links import extract_link_content
 from .celery_app import celery_app
 
@@ -102,62 +102,7 @@ def scrape_link_task(self, user_id: int, file_id: int):
         db.close()
 
 
-@celery_app.task(
-    bind=True,
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_kwargs={"max_retries": 3},
-    name="app.workers.tasks.transcribe_media_task",
-)
-def transcribe_media_task(
-    self,
-    user_id: int,
-    file_id: int,
-    transcript_text: Optional[str] = None,
-    duration_seconds: Optional[int] = None,
-):
-    db = SessionLocal()
-    try:
-        file_record = get_file_or_none(db, user_id, file_id)
-        if file_record is None:
-            return {"status": "missing"}
 
-        if file_record.file_type not in {FileType.AUDIO, FileType.VIDEO}:
-            raise RuntimeError("Only audio and video files can be transcribed.")
-
-        file_record.extraction_status = "processing"
-        if duration_seconds is not None:
-            file_record.duration_seconds = duration_seconds
-        db.add(file_record)
-        db.commit()
-
-        if not transcript_text:
-            # Perform server-side transcription and OCR pipeline
-            content_text = extract_file_and_store(db, file_record)
-            db.commit()
-            return {
-                "status": "completed",
-                "file_id": file_id,
-                "length": len(content_text),
-                "cached": False,
-            }
-
-        content_text, from_cache = store_media_transcript(db, file_record, transcript_text, duration_seconds)
-        db.commit()
-        return {
-            "status": "completed",
-            "file_id": file_id,
-            "length": len(content_text),
-            "cached": from_cache,
-        }
-    except Exception as exc:
-        db.rollback()
-        file_record = get_file_or_none(db, user_id, file_id)
-        if file_record is not None:
-            _update_file_failure(db, file_record, str(exc))
-        raise
-    finally:
-        db.close()
 
 
 @celery_app.task(

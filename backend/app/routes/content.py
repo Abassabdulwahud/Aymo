@@ -14,7 +14,7 @@ from ..models.user import User
 from ..repositories.scoped_queries import file_for_user, note_for_user
 from ..services.embeddings import LONG_TEXT_CHARACTER_THRESHOLD, replace_note_embeddings
 from ..schemas.ai import ContentSyncRequest, ContentSyncResponse, FileJobRequest, FileJobResponse
-from ..workers.tasks import extract_pdf_task, rebuild_note_embeddings_task, scrape_link_task, transcribe_media_task
+from ..workers.tasks import extract_pdf_task, rebuild_note_embeddings_task, scrape_link_task
 
 router = APIRouter(prefix="/api/protected", tags=["content"])
 
@@ -107,7 +107,7 @@ def queue_pdf_extraction(
     )
 
 
-@router.post("/files/transcribe-audio", response_model=FileJobResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/files/transcribe-audio", response_model=FileJobResponse, status_code=status.HTTP_200_OK)
 def queue_media_transcription(
     payload: FileJobRequest,
     db: Session = Depends(get_db),
@@ -117,55 +117,17 @@ def queue_media_transcription(
     if file_record.file_type not in {FileType.AUDIO, FileType.VIDEO}:
         raise HTTPException(status_code=400, detail="Only audio or video files can use this endpoint.")
 
-    if payload.duration_seconds is not None:
-        file_record.duration_seconds = payload.duration_seconds
-
-    from ..models.source import Source
-    from ..workers.tasks import process_source_task
-    source = db.query(Source).filter(
-        Source.note_id == file_record.note_id,
-        Source.public_url == file_record.file_url,
-    ).first()
-
-    if source and payload.duration_seconds is not None:
-        source.duration_seconds = payload.duration_seconds
-        db.add(source)
-
-    is_resuming = (
-        file_record.extraction_status == "failed"
-        and file_record.processed_chunks is not None
-        and file_record.processed_chunks > 0
-    )
-
-    # Commit the "queued" state BEFORE dispatching the task.
-    # If Celery runs in eager/synchronous mode the task executes inline inside
-    # .delay() and writes its own completion status via _update_matching_file.
-    # Committing first ensures those writes are never overwritten afterward.
-    import json
-    from ..utils.extraction.media import get_initial_steps
-    is_video = file_record.file_type == FileType.VIDEO
-    file_record.extraction_status = "queued"
+    file_record.extraction_status = "completed"
+    file_record.progress_percent = 100
     file_record.extraction_error = None
-    if not is_resuming:
-        file_record.progress_percent = 0
-        file_record.processed_chunks = 0
-        file_record.total_chunks = 0
-        file_record.partial_transcript = None
-    file_record.detailed_steps = json.dumps(get_initial_steps(is_video, processed_chunks=file_record.processed_chunks))
     db.add(file_record)
     db.commit()
 
-    if source:
-        task = process_source_task.delay(current_user.id, source.id)
-        task_id = str(task.id)
-    else:
-        task_id = "already-processed"
-
     return FileJobResponse(
         file_id=file_record.id,
-        task_id=task_id,
-        status="queued",
-        message="Media transcription has been queued.",
+        task_id="not-applicable",
+        status="completed",
+        message="AI transcription is disabled. File is stored successfully.",
     )
 
 

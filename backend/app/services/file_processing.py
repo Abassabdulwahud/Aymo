@@ -42,46 +42,7 @@ def _transcription_cache_key(file_hash: str) -> str:
     return "transcription:{0}".format(file_hash)
 
 
-def store_media_transcript(
-    db: Session,
-    file_record: File,
-    transcript_text: str,
-    duration_seconds: Optional[int] = None,
-) -> Tuple[str, bool]:
-    settings = get_settings()
-    file_hash = file_record.content_hash or build_file_hash(file_record)
-    file_record.content_hash = file_hash
-    if duration_seconds is not None:
-        file_record.duration_seconds = duration_seconds
 
-    cached = cache_client.get_json(_transcription_cache_key(file_hash))
-    if cached and cached.get("content"):
-        transcript_text = cached["content"]
-        from_cache = True
-    else:
-        cache_client.set_json(
-            _transcription_cache_key(file_hash),
-            {"content": transcript_text},
-            settings.transcription_cache_ttl_seconds,
-        )
-        from_cache = False
-
-    upsert_extracted_content(
-        db=db,
-        note=file_record.note,
-        user_id=file_record.user_id,
-        source_type="{0}_transcript".format(file_record.file_type.value),
-        source_label=file_record.file_name,
-        content_text=transcript_text,
-        file_record=file_record,
-        source_url=file_record.file_url,
-    )
-    file_record.extracted_content = None
-    file_record.extraction_status = "completed"
-    file_record.extraction_error = None
-    file_record.extracted_at = datetime.now(timezone.utc)
-    db.add(file_record)
-    return transcript_text, from_cache
 
 
 def extract_file_and_store(db: Session, file_record: File) -> str:
@@ -159,8 +120,6 @@ def extract_file_and_store(db: Session, file_record: File) -> str:
         FileType.DOCUMENT: "document_text",
         FileType.LINK: "link_text",
         FileType.IMAGE: "image_analysis",
-        FileType.AUDIO: "audio_transcript",
-        FileType.VIDEO: "video_transcript",
     }.get(file_record.file_type, "file_text")
     upsert_extracted_content(
         db=db,

@@ -129,20 +129,7 @@ export function NoteSidePanel({
     const isFailed = status === "failed";
     const errorMsg = upload.extractionError;
 
-    // Render manual Start button for pending media files
-    if ((upload.kind === "video" || upload.kind === "audio") && status === "pending") {
-      return (
-        <div className="media-pending-action-panel">
-          <p className="media-status-title">{upload.kind === "video" ? "Video uploaded" : "Audio uploaded"}</p>
-          {upload.durationSeconds ? (
-            <p className="media-duration-text">Duration: {formatDuration(upload.durationSeconds)}</p>
-          ) : null}
-          <button className="btn btn-solid start-extraction-btn" type="button" onClick={() => onStartExtraction(upload.id)}>
-            Start Extraction
-          </button>
-        </div>
-      );
-    }
+
 
     let steps: Array<{ name: string; status: "pending" | "processing" | "completed" | "failed" }> = [];
     if (upload.detailedSteps) {
@@ -176,16 +163,7 @@ export function NoteSidePanel({
           </div>
         )}
 
-        {isFailed && (upload.kind === "video" || upload.kind === "audio") && (
-          <div className="media-failed-action-panel">
-            {upload.durationSeconds ? (
-              <p className="media-duration-text">Duration: {formatDuration(upload.durationSeconds)}</p>
-            ) : null}
-            <button className="btn btn-solid resume-extraction-btn" type="button" onClick={() => onStartExtraction(upload.id)}>
-              Resume Extraction
-            </button>
-          </div>
-        )}
+
 
         {steps.length > 0 && (
           <div className="progress-steps-section">
@@ -381,8 +359,18 @@ export function NoteSidePanel({
 
         <div className="file-viewer-surface">
           {viewerKind === "image" && previewUrl ? <img className="file-preview-image" src={previewUrl} alt={selectedUpload.name} /> : null}
-          {viewerKind === "video" && previewUrl ? <video className="file-preview-media" src={previewUrl} controls /> : null}
-          {viewerKind === "audio" && previewUrl ? <audio className="file-preview-audio" src={previewUrl} controls /> : null}
+          {viewerKind === "video" && previewUrl ? (
+            <div className="media-preview-container">
+              <div className="media-coming-soon-banner">AI video analysis is coming soon.</div>
+              <video className="file-preview-media" src={previewUrl} controls />
+            </div>
+          ) : null}
+          {viewerKind === "audio" && previewUrl ? (
+            <div className="media-preview-container">
+              <div className="media-coming-soon-banner">AI transcription for audio is coming soon.</div>
+              <audio className="file-preview-audio" src={previewUrl} controls />
+            </div>
+          ) : null}
           {viewerKind === "link" ? (
             <div className="file-link-preview">
               <p>{selectedUpload.source ?? t("viewer.noLink")}</p>

@@ -41,7 +41,7 @@ import {
 } from "./services/notesService";
 import { listTags } from "./services/tagsService";
 import { chatWithAIHttp, listAIResponses, streamAIChat } from "./services/aiService";
-import { queueLinkScrape, queueMediaTranscription, queuePdfExtraction, syncNoteContent } from "./services/contentService";
+import { queueLinkScrape, queuePdfExtraction, syncNoteContent } from "./services/contentService";
 import { loadNoteRightPanelLayout, saveNoteRightPanelLayout } from "./services/noteLayoutStorage";
 
 interface HomeNote {
@@ -743,9 +743,6 @@ export default function App() {
       return;
     }
 
-    if (file.file_type === "audio" || file.file_type === "video") {
-      await queueMediaTranscription(authToken, file.id);
-    }
   };
 
   useEffect(() => {
@@ -1058,13 +1055,7 @@ export default function App() {
   };
 
   const handleStartExtraction = async (fileId: number) => {
-    if (!authToken || !selectedNote) return;
-    try {
-      await queueMediaTranscription(authToken, fileId);
-      await refreshNoteFiles();
-    } catch (error) {
-      window.alert("Failed to start extraction: " + (error instanceof Error ? error.message : String(error)));
-    }
+    // Media extraction is disabled. This handler is now a no-op.
   };
 
   const handleAddLink = async () => {
@@ -1530,7 +1521,7 @@ export default function App() {
 
         <input
           className="search-input"
-          placeholder="Search notes, PDFs, videos, audio, and links"
+          placeholder="Search notes, PDFs, and links"
           value={search}
           onChange={(event) => {
             setSearch(event.target.value);

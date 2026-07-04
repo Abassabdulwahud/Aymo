@@ -78,36 +78,6 @@ def list_note_files(
     return FileListResponse(items=items, total=len(items))
 
 
-def _extract_media_duration(file_path: Path) -> Optional[int]:
-    import subprocess
-    import re
-    try:
-        import imageio_ffmpeg
-    except ModuleNotFoundError:
-        logger.warning(
-            "imageio-ffmpeg is not installed; skipping duration extraction for %s. "
-            "Install it with: pip install imageio-ffmpeg",
-            file_path,
-        )
-        return None
-    try:
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        result = subprocess.run(
-            [ffmpeg_exe, "-i", str(file_path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=10
-        )
-        match = re.search(r"Duration:\s*(\d{2}):(\d{2}):(\d{2})", result.stderr)
-        if match:
-            hours, minutes, seconds = map(int, match.groups())
-            return hours * 3600 + minutes * 60 + seconds
-    except Exception as exc:
-        logger.warning("Failed to extract media duration for %s: %s", file_path, exc)
-    return None
-
-
 @router.post("/notes/{note_id}/files", response_model=FileResponse, status_code=status.HTTP_201_CREATED)
 def upload_note_file(
     note_id: int,
@@ -131,13 +101,7 @@ def upload_note_file(
     storage_key: Optional[str] = getattr(provider, "last_public_id", None)
     provider_name: str = settings.file_storage_provider
 
-    # Duration extraction — only possible when the file is locally accessible
     duration_seconds = None
-    if file_type in {FileType.AUDIO, FileType.VIDEO} and provider_name == "local":
-        from ..utils.extraction.base import file_path_from_uploads_root
-        local_path = file_path_from_uploads_root(settings.uploads_dir, settings.uploads_base_url, public_url)
-        if local_path and local_path.exists():
-            duration_seconds = _extract_media_duration(local_path)
 
     file_record = File(
         note_id=note_id,
