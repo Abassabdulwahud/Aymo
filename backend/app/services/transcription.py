@@ -2,7 +2,6 @@ import os
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
-from faster_whisper import WhisperModel
 import requests
 
 from ..config import get_settings
@@ -37,7 +36,10 @@ class FasterWhisperProvider(TranscriptionProvider):
         self.device = device
         self.compute_type = compute_type
 
-    def get_model(self) -> WhisperModel:
+    def get_model(self):
+        # Deferred import: WhisperModel pulls in ctranslate2 + onnxruntime (~60 MB).
+        # Only load these when local Whisper transcription is actually requested.
+        from faster_whisper import WhisperModel
         global _cached_model, _cached_model_size
         if _cached_model is None or _cached_model_size != self.model_size:
             logger.info("Loading Faster-Whisper model size '%s' on device '%s' with compute_type '%s'",

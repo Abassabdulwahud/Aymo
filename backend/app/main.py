@@ -17,7 +17,7 @@ from .routes.notes import router as notes_router
 from .routes.protected import router as protected_router
 from .routes.settings import router as settings_router
 from .routes.tags import router as tags_router
-from .services.embeddings import EMBEDDING_DIMENSION, EMBEDDING_MODEL_NAME, initialize_embedding_model
+from .services.embeddings import EMBEDDING_DIMENSION, EMBEDDING_MODEL_NAME
 from .services.translation_service import initialize_translations
 
 settings = get_settings()
@@ -87,14 +87,19 @@ def run_migrations():
 
 
 @app.on_event("startup")
-def warm_embedding_model():
+def on_startup():
     # Instantiate the storage provider at startup to trigger validation early
     from .storage import get_storage_provider
     get_storage_provider()
 
     run_migrations()
     initialize_translations()
-    initialize_embedding_model()
+
+    # NOTE: do NOT call initialize_embedding_model() here.
+    # Loading SentenceTransformer (torch) in the web process consumes ~330 MB
+    # before any request is served, which exceeds Render's 512 MB free-tier limit.
+    # The model is loaded lazily on first use inside the Celery worker process
+    # via get_embedding_model() which is decorated with @lru_cache.
     app.state.embedding_model_name = EMBEDDING_MODEL_NAME
     app.state.embedding_dimension = EMBEDDING_DIMENSION
 
