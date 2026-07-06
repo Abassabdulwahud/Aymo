@@ -179,9 +179,6 @@ def _mark_source_failed(source_id: int, user_id: int, error_message: str) -> Non
 
 @celery_app.task(
     bind=True,
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_kwargs={"max_retries": 3},
     acks_late=True,          # Don't ack until task finishes — prevents task loss on SIGKILL
     name="app.workers.tasks.process_source_task",
 )
@@ -215,41 +212,8 @@ def process_source_task(self, user_id: int, source_id: int):
     except Exception as exc:
         logger.exception("[DIAG] source %s — EXCEPTION in process_source_task: %s", source_id, exc)
         db.rollback()
-        # Check if this is the FINAL retry — if so, permanently mark as FAILED
-        if self.request.retries >= self.max_retries:
-            _mark_source_failed(source_id, user_id, str(exc))
-        else:
-            # Transient failure — still update to FAILED so UI shows error immediately,
-            # but allow Celery to retry the task
-            try:
-                source = db.query(Source).filter(Source.id == source_id, Source.user_id == user_id).first()
-                if source is not None:
-                    source.status = SourceStatus.FAILED
-                    source.processing_error = str(exc)
-                    source.processing_progress = 100
-                    db.add(source)
-
-                    from ..models.file import File
-                    file_record = db.query(File).filter(
-                        File.note_id == source.note_id,
-                        File.file_url == source.public_url
-                    ).first()
-                    if file_record:
-                        file_record.extraction_status = "failed"
-                        file_record.progress_percent = 100
-                        file_record.extraction_error = str(exc)
-                        db.add(file_record)
-
-                    db.commit()
-                    logger.info("[DIAG] source %s — FAILED state committed (retry %s/%s)",
-                                source_id, self.request.retries, self.max_retries)
-            except Exception as sync_exc:
-                logger.error("[DIAG] source %s — Failed to sync FAILED state: %s", source_id, sync_exc)
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-        raise
+        # Always mark as FAILED and sync to File record so the UI shows the error
+        _mark_source_failed(source_id, user_id, str(exc))
     finally:
         db.close()
 

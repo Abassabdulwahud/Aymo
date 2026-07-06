@@ -104,30 +104,53 @@ class BaseSourceProcessor(ABC):
         logger.info("[DIAG] commit_and_sync DB commit done — source_id=%s", source.id)
 
     def run_post_processing(self, db: Session, source: Source, content_text: str) -> None:
+        embedding_warning: str | None = None
+        summary_warning: str | None = None
+
+        # 1. Generate and save embeddings (non-fatal — text extraction already succeeded)
         try:
-            # 1. Generate and save embeddings
-            logger.info("Generating embeddings for source %d", source.id)
+            logger.info("[DIAG] Generating embeddings for source %d", source.id)
             embed_source(db, source)
             db.commit()
-            
-            # 2. Generate summary & keywords
-            logger.info("Generating summary for source %d", source.id)
+            logger.info("[DIAG] Embeddings committed for source %d", source.id)
+        except Exception as exc:
+            logger.warning(
+                "[DIAG] Embedding generation failed for source %d (non-fatal): %s",
+                source.id, exc,
+            )
+            embedding_warning = f"Embedding skipped: {exc}"
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+        # 2. Generate summary & keywords (non-fatal)
+        try:
+            logger.info("[DIAG] Generating summary for source %d", source.id)
             summarize_source(db, source)
             db.commit()
-            
-            # 3. Transition to READY
-            source.status = SourceStatus.READY
-            source.processing_progress = 100
-            self.commit_and_sync(db, source)
-            logger.info("Successfully processed source %d", source.id)
-            
+            logger.info("[DIAG] Summary committed for source %d", source.id)
         except Exception as exc:
-            logger.exception("Failed post-processing for source %d: %s", source.id, exc)
-            source.status = SourceStatus.FAILED
-            source.processing_progress = 100
-            source.processing_error = f"Post-processing failed: {exc}"
+            logger.warning(
+                "[DIAG] Summary generation failed for source %d (non-fatal): %s",
+                source.id, exc,
+            )
+            summary_warning = f"Summary skipped: {exc}"
             try:
-                self.commit_and_sync(db, source)
-            except Exception as nested_exc:
-                logger.error("Failed to commit failed state for source %d: %s", source.id, nested_exc)
-            raise
+                db.rollback()
+            except Exception:
+                pass
+
+        # 3. Always transition to READY — text extraction succeeded
+        source.status = SourceStatus.READY
+        source.processing_progress = 100
+        if embedding_warning or summary_warning:
+            warnings = "; ".join(filter(None, [embedding_warning, summary_warning]))
+            source.processing_error = warnings
+            logger.warning(
+                "[DIAG] source %d marked READY with warnings: %s", source.id, warnings
+            )
+        else:
+            source.processing_error = None
+        self.commit_and_sync(db, source)
+        logger.info("[DIAG] source %d successfully reached READY state", source.id)
