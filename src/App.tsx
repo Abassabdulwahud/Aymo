@@ -731,39 +731,8 @@ export default function App() {
   };
 
   const queueExtractionForFile = async (file: Pick<BackendFile, "id" | "file_type">) => {
-    if (!authToken) return;
-
-    if (file.file_type === "pdf") {
-      await queuePdfExtraction(authToken, file.id);
-      return;
-    }
-
-    if (file.file_type === "link") {
-      await queueLinkScrape(authToken, file.id);
-      return;
-    }
-
+    // Automatic extraction disabled.
   };
-
-  useEffect(() => {
-    if (!selectedNote) {
-      return;
-    }
-
-    const uploadKindsToQueue = new Set<UploadKind>(["pdf", "link"]);
-    for (const upload of selectedNote.uploads) {
-      if (!uploadKindsToQueue.has(upload.kind) || queuedExtractionRef.current[upload.id]) {
-        continue;
-      }
-      queuedExtractionRef.current[upload.id] = true;
-      void queueExtractionForFile({
-        id: upload.id,
-        file_type: upload.kind,
-      }).catch(() => {
-        delete queuedExtractionRef.current[upload.id];
-      });
-    }
-  }, [selectedNote, authToken]);
 
   const refreshNoteFiles = async () => {
     if (!authToken || !selectedNote) return;
@@ -1045,17 +1014,7 @@ export default function App() {
       pendingUploadIdsRef.current.delete(f.id);
     }
 
-    // Step 4: Fire extraction queuing in the background — do NOT await.
-    // The file is already visible in the UI; extraction runs independently.
-    for (const file of uploaded) {
-      if (file.file_type !== "audio" && file.file_type !== "video") {
-        queueExtractionForFile(file).catch(() => undefined);
-      }
-    }
-  };
-
-  const handleStartExtraction = async (fileId: number) => {
-    // Media extraction is disabled. This handler is now a no-op.
+    // Step 4: Fire extraction queuing in the background is disabled.
   };
 
   const handleAddLink = async () => {
@@ -1063,7 +1022,6 @@ export default function App() {
     const input = window.prompt(t("app.addLinkPrompt"), "https://");
     if (!input) return;
     const created = await addLink(authToken, selectedNote.id, input, input.replace(/^https?:\/\//, ""));
-    await queueExtractionForFile(created).catch(() => undefined);
     updateCurrentNote({ uploads: [mapFileToUpload(created, noteLabels.justNow), ...selectedNote.uploads] });
   };
 
@@ -1444,7 +1402,6 @@ export default function App() {
                   onFileUpload={(files) => void handleUpload(files)}
                   onAddLink={() => void handleAddLink()}
                   onRemoveUpload={(id) => void handleRemoveUpload(id)}
-                  onStartExtraction={handleStartExtraction}
                 />
               </div>
             </aside>

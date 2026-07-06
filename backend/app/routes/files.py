@@ -114,6 +114,8 @@ def upload_note_file(
         storage_provider=provider_name,
         storage_key=storage_key,
         cdn_url=public_url if provider_name == "cloudinary" else None,
+        extraction_status="completed",
+        progress_percent=100,
     )
     db.add(file_record)
     db.commit()
@@ -144,7 +146,8 @@ def upload_note_file(
             duration_seconds=duration_seconds,
             mime_type=upload.content_type,
             public_url=public_url,
-            status=SourceStatus.UPLOADED,
+            status=SourceStatus.READY,
+            processing_progress=100,
             storage_provider=provider_name,
             storage_key=storage_key,
             cdn_url=public_url if provider_name == "cloudinary" else None,
@@ -152,10 +155,6 @@ def upload_note_file(
         db.add(source_record)
         db.commit()
         db.refresh(source_record)
-
-        # Auto-queue the source for processing
-        from ..workers.tasks import process_source_task
-        process_source_task.delay(current_user.id, source_record.id)
     except Exception as exc:
         # Dual-write is best-effort — never block the original File upload
         logger.warning("Failed to dual-write Source for file %d: %s", file_record.id, exc)
@@ -183,6 +182,8 @@ def create_note_link(
         file_type=FileType.LINK,
         file_url=normalized_url,
         file_size=0,
+        extraction_status="completed",
+        progress_percent=100,
     )
     db.add(file_record)
     db.commit()
@@ -201,15 +202,12 @@ def create_note_link(
             original_filename=None,
             file_size=0,
             public_url=normalized_url,
-            status=SourceStatus.UPLOADED,
+            status=SourceStatus.READY,
+            processing_progress=100,
         )
         db.add(source_record)
         db.commit()
         db.refresh(source_record)
-
-        # Auto-queue the source for processing
-        from ..workers.tasks import process_source_task
-        process_source_task.delay(current_user.id, source_record.id)
     except Exception as exc:
         logger.warning("Failed to dual-write Source for link %d: %s", file_record.id, exc)
 
@@ -253,19 +251,9 @@ def extract_file(
     language_code: str = Depends(get_current_language),
 ):
     file_record = _get_file_or_404(db, current_user.id, payload.file_id, language_code)
-    message = translate(language_code, "file_extract_success")
-    try:
-        extract_file_and_store(db, file_record)
-        db.commit()
-        db.refresh(file_record)
-    except Exception as exc:
-        db.rollback()
-        result = extract_file_content(file_record)
-        db.add(file_record)
-        db.commit()
-        db.refresh(file_record)
-        message = result.error or str(exc) or translate(language_code, "file_extract_warning")
-        response.headers["X-AYMO-Warning"] = message
-        return FileExtractResponse(item=file_record, message=message)
-
-    return FileExtractResponse(item=file_record, message=message)
+    file_record.extraction_status = "completed"
+    file_record.progress_percent = 100
+    db.add(file_record)
+    db.commit()
+    db.refresh(file_record)
+    return FileExtractResponse(item=file_record, message="Extraction is disabled. File is directly ready.")

@@ -292,8 +292,8 @@ def process_source(
 
     # If forced or failed, we clear previous progress/error/chunks and start over
     if payload.force or source.status == SourceStatus.FAILED:
-        source.status = SourceStatus.UPLOADED
-        source.processing_progress = 0
+        source.status = SourceStatus.READY
+        source.processing_progress = 100
         source.processing_error = None
         source.summary = None
         source.keywords = None
@@ -314,9 +314,10 @@ def process_source(
         db.add(source)
         db.commit()
 
-    from ..workers.tasks import process_source_task
-    process_source_task.delay(current_user.id, source.id)
-
+    source.status = SourceStatus.READY
+    source.processing_progress = 100
+    db.add(source)
+    db.commit()
     db.refresh(source)
     return source
 
@@ -330,16 +331,11 @@ def resume_source(
 ):
     source = _get_source_or_404(db, current_user.id, id, language_code)
 
-    if source.status != SourceStatus.FAILED:
-        # Only allow resuming if it was failed/partial
-        raise HTTPException(
-            status_code=400,
-            detail=f"Source is currently in {source.status.value} state, cannot resume.",
-        )
-
-    from ..workers.tasks import process_source_task
-    process_source_task.delay(current_user.id, source.id)
-
+    source.status = SourceStatus.READY
+    source.processing_progress = 100
+    db.add(source)
+    db.commit()
+    db.refresh(source)
     return source
 
 

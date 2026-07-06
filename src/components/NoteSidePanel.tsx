@@ -22,7 +22,6 @@ interface NoteSidePanelProps {
   onFileUpload: (files: FileList | null) => void;
   onAddLink: () => void;
   onRemoveUpload: (id: number) => Promise<void> | void;
-  onStartExtraction: (id: number) => Promise<void> | void;
 }
 
 function detectViewerKind(upload: UploadedItem): "image" | "pdf" | "document" | "video" | "audio" | "link" {
@@ -56,7 +55,6 @@ export function NoteSidePanel({
   onFileUpload,
   onAddLink,
   onRemoveUpload,
-  onStartExtraction,
 }: NoteSidePanelProps) {
   const { t } = useI18n();
   const [selectedUploadId, setSelectedUploadId] = useState<number | null>(uploads[0]?.id ?? null);
@@ -69,133 +67,7 @@ export function NoteSidePanel({
     setExpandedSteps((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const getFriendlyStatus = (
-    status: string,
-    steps: Array<{ name: string; status: string }>,
-    progress: number,
-    processedChunks?: number,
-    totalChunks?: number,
-  ): string => {
-    if (status === "queued") return "Queued";
-    if (status === "pending") return "Pending";
-    if (status === "failed") return "Failed";
-    if (status === "completed") return "Completed";
 
-    if (status === "processing" || status.startsWith("processing")) {
-      const activeStep = steps.find((s) => s.status === "processing" || s.status.startsWith("processing"));
-      if (activeStep) {
-        if (activeStep.name === "Extracting Audio" || activeStep.name === "Segmenting Audio") {
-          return "Preparing Audio";
-        }
-        if (activeStep.name === "Transcribing Chunks") {
-          if (processedChunks !== undefined && totalChunks !== undefined && totalChunks > 0) {
-            return `Processing ${processedChunks}/${totalChunks} Chunks`;
-          }
-          const chunkMatch = activeStep.status.match(/Chunk\s+(\d+)\/(\d+)/i);
-          if (chunkMatch) {
-            return `Processing ${chunkMatch[1]}/${chunkMatch[2]} Chunks`;
-          }
-          return "Transcribing";
-        }
-        return activeStep.name;
-      }
-      return "Processing";
-    }
-    return status.charAt(0).toUpperCase() + status.slice(1);
-  };
-
-  const renderProgressPanel = (upload: UploadedItem) => {
-    const status = upload.extractionStatus;
-    if (!status || status === "completed") return null;
-
-    // Show uploading spinner for optimistic temp entries
-    if (status === "uploading") {
-      return (
-        <div className="upload-progress-panel upload-progress-uploading">
-          <div className="progress-info-row">
-            <span className="progress-status-text">
-              <Loader2 size={13} className="animate-spin" style={{ display: "inline", marginRight: 6, verticalAlign: "middle" }} />
-              Uploading…
-            </span>
-          </div>
-          <div className="progress-bar-bg">
-            <div className="progress-bar-fill progress-bar-indeterminate" />
-          </div>
-        </div>
-      );
-    }
-
-    const progress = upload.progressPercent ?? 0;
-    const isFailed = status === "failed";
-    const errorMsg = upload.extractionError;
-
-
-
-    let steps: Array<{ name: string; status: "pending" | "processing" | "completed" | "failed" }> = [];
-    if (upload.detailedSteps) {
-      try {
-        steps = JSON.parse(upload.detailedSteps);
-      } catch (e) {
-        console.error("Failed to parse detailed steps JSON", e);
-      }
-    }
-
-    const isExpanded = !!expandedSteps[upload.id];
-
-    return (
-      <div className={`upload-progress-panel ${isFailed ? "is-failed" : ""}`}>
-        <div className="progress-info-row">
-          <span className="progress-status-text">
-            {isFailed ? "Extraction failed" : getFriendlyStatus(status, steps, progress, upload.processedChunks, upload.totalChunks)}
-          </span>
-          {!isFailed && <span className="progress-percentage">{progress}%</span>}
-        </div>
-
-        {!isFailed && (
-          <div className="progress-bar-bg">
-            <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
-          </div>
-        )}
-
-        {isFailed && errorMsg && (
-          <div className="progress-error-message">
-            {errorMsg}
-          </div>
-        )}
-
-
-
-        {steps.length > 0 && (
-          <div className="progress-steps-section">
-            <button
-              type="button"
-              className="progress-steps-toggle"
-              onClick={() => toggleStepsExpanded(upload.id)}
-            >
-              <span>{isExpanded ? "Hide details" : "Show details"}</span>
-              {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            </button>
-
-            {isExpanded && (
-              <ul className="progress-steps-list">
-                {steps.map((step, idx) => (
-                  <li key={idx} className={`progress-step-item is-${step.status}`}>
-                    <span className="step-icon">
-                      {step.status === "completed" && <CheckCircle2 size={13} className="step-icon-completed" />}
-                      {step.status === "processing" && <Loader2 size={13} className="animate-spin step-icon-processing" />}
-                      {step.status === "pending" && <Circle size={13} className="step-icon-pending" />}
-                      {step.status === "failed" && <XCircle size={13} className="step-icon-failed" />}
-                    </span>
-                    <span className="step-name">{step.name}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   useEffect(() => {
     setSelectedUploadId((current) => {
@@ -314,7 +186,6 @@ export function NoteSidePanel({
                   <strong>{upload.name}</strong>
                   <span>
                     {upload.sizeLabel} | {t("uploads.added")} {upload.addedAt}
-                    {upload.extractionStatus && upload.extractionStatus === "completed" ? ` | ${t("viewer.extraction")}: ${upload.extractionStatus}` : ""}
                   </span>
                 </span>
               </button>
@@ -322,7 +193,6 @@ export function NoteSidePanel({
                 <Trash2 size={17} strokeWidth={1.8} />
               </button>
             </div>
-            {upload.extractionStatus && upload.extractionStatus !== "completed" && renderProgressPanel(upload)}
           </article>
         ))}
         {uploads.length === 0 ? <div className="assistant-empty">{t("uploads.empty")}</div> : null}
@@ -361,13 +231,11 @@ export function NoteSidePanel({
           {viewerKind === "image" && previewUrl ? <img className="file-preview-image" src={previewUrl} alt={selectedUpload.name} /> : null}
           {viewerKind === "video" && previewUrl ? (
             <div className="media-preview-container">
-              <div className="media-coming-soon-banner">AI video analysis is coming soon.</div>
               <video className="file-preview-media" src={previewUrl} controls />
             </div>
           ) : null}
           {viewerKind === "audio" && previewUrl ? (
             <div className="media-preview-container">
-              <div className="media-coming-soon-banner">AI transcription for audio is coming soon.</div>
               <audio className="file-preview-audio" src={previewUrl} controls />
             </div>
           ) : null}
