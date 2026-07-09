@@ -203,9 +203,9 @@ export function NoteSidePanel({
   const [isHeaderExpanded, setIsHeaderExpanded] = useState<boolean>(() => {
     try {
       const persisted = sessionStorage.getItem("aymo_file_viewer_header_expanded");
-      return persisted !== null ? JSON.parse(persisted) : false; // Default to collapsed
+      return persisted !== null ? JSON.parse(persisted) : true; // Default to expanded (true)
     } catch {
-      return false;
+      return true;
     }
   });
 
@@ -229,54 +229,51 @@ export function NoteSidePanel({
     const viewerKind = detectViewerKind(selectedUpload);
 
     return (
-      <div className="file-viewer-shell">
-        <div className="file-viewer-head">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+      <div className="file-viewer-shell" style={{ gap: isHeaderExpanded ? "18px" : "4px" }}>
+        <div className="file-viewer-head" style={{ padding: "0 2px" }}>
+          {/* Persistent Action Bar: collapse toggle and delete button */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, paddingBottom: 4 }}>
             <button
               className="icon-only-button"
               type="button"
               onClick={toggleHeaderExpansion}
-              style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit", fontWeight: "bold" }}
+              aria-label={isHeaderExpanded ? "Collapse header" : "Expand header"}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
             >
-              {isHeaderExpanded ? <ChevronDown size={18} /> : <ChevronDown size={18} style={{ transform: "rotate(-90deg)", transition: "transform 0.2s" }} />}
-              <span style={{ fontSize: "16px", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", maxWidth: "200px" }}>
-                {selectedUpload.name}
-              </span>
+              {isHeaderExpanded ? <ChevronUp size={18} strokeWidth={2} /> : <ChevronDown size={18} strokeWidth={2} />}
             </button>
-
             <button className="icon-only-button" type="button" onClick={() => onRemoveUpload(selectedUpload.id)} aria-label={t("uploads.remove")}>
               <Trash2 size={17} strokeWidth={1.8} />
             </button>
           </div>
 
+          {/* Collapsible Meta & Filename Area */}
           <div
             style={{
-              maxHeight: isHeaderExpanded ? "200px" : "0px",
+              maxHeight: isHeaderExpanded ? "300px" : "0px",
               overflow: "hidden",
-              transition: "max-height 0.3s ease-in-out, opacity 0.3s ease-in-out",
+              transition: "max-height 180ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms cubic-bezier(0.4, 0, 0.2, 1), padding 180ms cubic-bezier(0.4, 0, 0.2, 1)",
               opacity: isHeaderExpanded ? 1 : 0,
-              paddingTop: isHeaderExpanded ? 12 : 0,
               display: "flex",
               flexDirection: "column",
-              gap: 8,
-              borderBottom: isHeaderExpanded ? "1px solid var(--border)" : "none",
-              paddingBottom: isHeaderExpanded ? 12 : 0
+              gap: 12
             }}
           >
-            <div className="file-viewer-copy">
-              <span className="file-meta-detail" style={{ textTransform: "uppercase", fontSize: "11px", fontWeight: "bold", letterSpacing: "0.05em" }}>
-                {viewerKind}
-              </span>
-              <span className="file-meta-detail">{selectedUpload.sizeLabel}</span>
-              <p className="file-subtext" style={{ margin: 0 }}>{t("uploads.added")} {selectedUpload.addedAt}</p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12 }}>
+              <div className="file-viewer-copy">
+                <span className="file-meta-detail">{viewerKind} | {selectedUpload.sizeLabel}</span>
+                <h3 style={{ margin: 0, fontSize: "22px", wordBreak: "break-word" }}>{selectedUpload.name}</h3>
+                <p className="file-subtext" style={{ margin: 0 }}>{t("uploads.added")} {selectedUpload.addedAt}</p>
+              </div>
+              <div className="file-viewer-actions" style={{ flexShrink: 0 }}>
+                {selectedUpload.source ? (
+                  <a className="text-action" href={selectedUpload.source} target="_blank" rel="noreferrer">
+                    {t("viewer.openSource")}
+                  </a>
+                ) : null}
+              </div>
             </div>
-            <div className="file-viewer-actions" style={{ marginTop: 4 }}>
-              {selectedUpload.source ? (
-                <a className="text-action" href={selectedUpload.source} target="_blank" rel="noreferrer" style={{ fontSize: "13px" }}>
-                  {t("viewer.openSource")}
-                </a>
-              ) : null}
-            </div>
+            <div style={{ borderBottom: "1px solid var(--border)", margin: "4px 0" }} />
           </div>
         </div>
 
