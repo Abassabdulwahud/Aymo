@@ -518,6 +518,32 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (openNoteMenuId === null) return;
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      // Close if the click target is not within the open menu wrap.
+      if (!target.closest(".menu-wrap")) {
+        setOpenNoteMenuId(null);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenNoteMenuId(null);
+      }
+    };
+
+    document.addEventListener("click", handleOutsideClick, { capture: true });
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("click", handleOutsideClick, { capture: true });
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openNoteMenuId]);
+
+  useEffect(() => {
     const body = document.body;
     const root = document.documentElement;
     const isNoteView = location.pathname.startsWith("/notes/");
