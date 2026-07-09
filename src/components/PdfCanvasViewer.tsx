@@ -106,7 +106,9 @@ export function PdfCanvasViewer({ source }: PdfCanvasViewerProps) {
       try {
         const firstPage = await pdfDocument.getPage(1);
         const baseViewport = firstPage.getViewport({ scale: 1 });
-        const renderScale = viewerWidth / baseViewport.width;
+        // Subtract scrollbar and padding width (approx 20px) to prevent overflow
+        const usableWidth = Math.max(200, viewerWidth - 20);
+        const renderScale = usableWidth / baseViewport.width;
         const nextLayouts: PageLayout[] = [];
         let nextTop = 0;
         let nextContentWidth = 0;
@@ -202,7 +204,8 @@ export function PdfCanvasViewer({ source }: PdfCanvasViewerProps) {
       try {
         const firstPage = await pdfDocument.getPage(1);
         const baseViewport = firstPage.getViewport({ scale: 1 });
-        const renderScale = viewerWidth / baseViewport.width;
+        const usableWidth = Math.max(200, viewerWidth - 20);
+        const renderScale = usableWidth / baseViewport.width;
 
         for (const renderedIndex of Array.from(renderedPageIndexesRef.current)) {
           if (!windowIndexes.has(renderedIndex)) {

@@ -3120,11 +3120,13 @@ body.page-note-view .pdf-viewer-stage {
 body.page-note-view .pdf-simple-viewer {
   padding: 0;
   background: transparent;
+  width: 100%;
 }
 
 body.page-note-view .pdf-content-viewport {
   padding: 0;
   scrollbar-color: var(--muted) transparent;
+  overflow-x: hidden;
 }
 
 body.page-note-view .pdf-content-viewport::-webkit-scrollbar-track,
