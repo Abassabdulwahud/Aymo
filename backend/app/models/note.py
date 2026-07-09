@@ -31,6 +31,11 @@ class Note(Base):
         server_default=func.now(),
         nullable=False,
     )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="notes")
     tags: Mapped[List["Tag"]] = relationship("Tag", secondary=note_tags, back_populates="notes")

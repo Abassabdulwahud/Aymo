@@ -32,6 +32,7 @@ export interface BackendNote {
   is_favorited: boolean;
   created_at: string;
   updated_at: string;
+  deleted_at?: string | null;
   tags: BackendTag[];
   files: BackendFile[];
 }
@@ -66,6 +67,37 @@ export async function listNotes(token: string): Promise<BackendNote[]> {
     token,
   });
   return response.items.map(normalizeBackendNote);
+}
+
+export async function listTrashedNotes(token: string, search?: string): Promise<BackendNote[]> {
+  const query = search ? `?search=${encodeURIComponent(search)}` : "";
+  const response = await apiRequest<NoteListResponse>(`/api/protected/notes/trash${query}`, {
+    method: "GET",
+    token,
+  });
+  return response.items.map(normalizeBackendNote);
+}
+
+export async function restoreNote(token: string, noteId: number): Promise<BackendNote> {
+  const note = await apiRequest<BackendNote>(`/api/protected/notes/trash/${noteId}/restore`, {
+    method: "POST",
+    token,
+  });
+  return normalizeBackendNote(note);
+}
+
+export async function permanentlyDeleteNote(token: string, noteId: number): Promise<void> {
+  await apiRequest<void>(`/api/protected/notes/trash/${noteId}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export async function emptyTrash(token: string): Promise<void> {
+  await apiRequest<void>("/api/protected/notes/trash", {
+    method: "DELETE",
+    token,
+  });
 }
 
 export async function getNoteFiles(token: string, noteId: number): Promise<BackendFile[]> {

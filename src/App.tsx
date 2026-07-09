@@ -14,6 +14,8 @@ import { AccountSettingsMenu } from "./components/AccountSettingsMenu";
 import { AIProvider, ChatMessage, UploadKind, UploadedItem } from "./types";
 import { loadPreferences, savePreferences } from "./services/preferencesService";
 import { loadAIProvider, saveAIProvider } from "./services/aiProviderStorage";
+import { TrashPage } from "./components/TrashPage";
+import { listTrashedNotes } from "./services/notesService";
 import {
   clearAuthToken,
   fetchCurrentUser,
@@ -284,6 +286,7 @@ export default function App() {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(loadAuthToken());
   const [notes, setNotes] = useState<HomeNote[]>([]);
+  const [trashedNoteCount, setTrashedNoteCount] = useState(0);
   const [search, setSearch] = useState("");
   const [tagCatalog, setTagCatalog] = useState<string[]>([]);
   const [activeTag, setActiveTag] = useState<string>("all");
@@ -468,12 +471,15 @@ export default function App() {
         if (mounted) {
           setIsWorkspaceLoading(true);
         }
-        const [preferences, noteItems, tagItems] = await Promise.all([
+        const [preferences, noteItems, tagItems, trashedItems] = await Promise.all([
           loadPreferences(authToken),
           listNotes(authToken),
           listTags(authToken),
+          listTrashedNotes(authToken),
         ]);
         if (!mounted) return;
+
+        setTrashedNoteCount(trashedItems.length);
 
         const mappedNotes = noteItems.map((note) => mapNoteToHomeNote(note, noteLabels));
         lastSyncedRef.current = Object.fromEntries(
@@ -864,6 +870,7 @@ export default function App() {
         return remaining;
       });
       setSelectedId((current) => (current === id ? nextSelectedId : current));
+      setTrashedNoteCount((prev) => prev + 1);
       setChatMessagesByNote((prev) => {
         const next = { ...prev };
         delete next[id];
@@ -1483,6 +1490,18 @@ export default function App() {
             </li>
           ))}
         </ul>
+
+        <div className="sidebar-section-divider" />
+        <button
+          className={`tag-item trash-nav-item ${location.pathname === "/trash" ? "active" : ""}`}
+          onClick={() => {
+            setOpenNoteMenuId(null);
+            navigate("/trash");
+          }}
+        >
+          <span>Trash</span>
+          <span>{trashedNoteCount > 0 ? `(${trashedNoteCount})` : ""}</span>
+        </button>
       </aside>
 
       <section className="home-main">
@@ -1622,6 +1641,84 @@ export default function App() {
           element={(
             <ProtectedRoute isAuthenticated={isAuthenticated}>
               {isWorkspaceLoading ? loadingScreen : homeScreen}
+            </ProtectedRoute>
+          )}
+        />
+        <Route
+          path="/trash"
+          element={(
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              {isWorkspaceLoading ? (
+                loadingScreen
+              ) : (
+                <div className="site-shell home-shell">
+                  <aside className="sidebar">
+                    <div className="logo-wrap">
+                      <AymoLogo variant="icon" size="small" darkMode={darkMode} />
+                    </div>
+
+                    <nav className="home-nav" aria-label="Notebook views">
+                      {primarySidebarItems.map((tag) => (
+                        <button
+                          key={tag.id}
+                          className={`tag-item ${activeTag === tag.id ? "active" : ""}`}
+                          onClick={() => {
+                            setActiveTag(tag.id);
+                            setOpenNoteMenuId(null);
+                            navigate("/home");
+                          }}
+                        >
+                          <span>{tag.label}</span>
+                          <span>{tag.count}</span>
+                        </button>
+                      ))}
+                    </nav>
+
+                    <p className="side-label">{t("home.tags")}</p>
+                    <ul className="tag-list">
+                      {tagSidebarItems.map((tag) => (
+                        <li key={tag.id}>
+                          <button
+                            className={`tag-item ${activeTag === tag.id ? "active" : ""}`}
+                            onClick={() => {
+                              setActiveTag(tag.id);
+                              setOpenNoteMenuId(null);
+                              navigate("/home");
+                            }}
+                          >
+                            <span>{tag.label}</span>
+                            <span>{tag.count}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <div className="sidebar-section-divider" />
+                    <button
+                      className={`tag-item trash-nav-item active`}
+                      onClick={() => {
+                        setOpenNoteMenuId(null);
+                      }}
+                    >
+                      <span>Trash</span>
+                      <span>{trashedNoteCount > 0 ? `(${trashedNoteCount})` : ""}</span>
+                    </button>
+                  </aside>
+                  <TrashPage
+                    authToken={authToken!}
+                    darkMode={darkMode}
+                    language={language}
+                    profile={profile}
+                    onThemeChange={handleThemeChange}
+                    onLanguageChange={handleLanguageChange}
+                    onLogout={handleLogout}
+                    onNoteRestored={(restoredNote) => {
+                      setNotes((prev) => [mapNoteToHomeNote(restoredNote, noteLabels), ...prev]);
+                      setTrashedNoteCount((prev) => Math.max(0, prev - 1));
+                    }}
+                  />
+                </div>
+              )}
             </ProtectedRoute>
           )}
         />

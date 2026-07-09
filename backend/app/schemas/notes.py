@@ -57,6 +57,7 @@ class NoteResponse(BaseModel):
     is_favorited: bool
     created_at: datetime
     updated_at: datetime
+    deleted_at: Optional[datetime] = None
     tags: List[TagSummary] = Field(default_factory=list)
     files: List[FileSummary] = Field(default_factory=list)
 

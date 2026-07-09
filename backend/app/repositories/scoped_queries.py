@@ -6,7 +6,11 @@ from ..models.tag import Tag
 
 
 def notes_for_user(db: Session, user_id: int) -> Query:
-    return db.query(Note).filter(Note.user_id == user_id)
+    return db.query(Note).filter(Note.user_id == user_id, Note.deleted_at.is_(None))
+
+
+def trashed_notes_for_user(db: Session, user_id: int) -> Query:
+    return db.query(Note).filter(Note.user_id == user_id, Note.deleted_at.isnot(None))
 
 
 def tags_for_user(db: Session, user_id: int) -> Query:
@@ -19,6 +23,10 @@ def files_for_user(db: Session, user_id: int) -> Query:
 
 def note_for_user(db: Session, user_id: int, note_id: int) -> Query:
     return notes_for_user(db, user_id).filter(Note.id == note_id)
+
+
+def trashed_note_for_user(db: Session, user_id: int, note_id: int) -> Query:
+    return trashed_notes_for_user(db, user_id).filter(Note.id == note_id)
 
 
 def tag_for_user(db: Session, user_id: int, tag_id: int) -> Query:
