@@ -200,6 +200,27 @@ export function NoteSidePanel({
     </div>
   );
 
+  const [isHeaderExpanded, setIsHeaderExpanded] = useState<boolean>(() => {
+    try {
+      const persisted = sessionStorage.getItem("aymo_file_viewer_header_expanded");
+      return persisted !== null ? JSON.parse(persisted) : false; // Default to collapsed
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleHeaderExpansion = () => {
+    setIsHeaderExpanded((prev) => {
+      const next = !prev;
+      try {
+        sessionStorage.setItem("aymo_file_viewer_header_expanded", JSON.stringify(next));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+  };
+
   const renderViewer = () => {
     if (!selectedUpload) {
       return <div className="assistant-empty">{t("viewer.selectFile")}</div>;
@@ -210,20 +231,52 @@ export function NoteSidePanel({
     return (
       <div className="file-viewer-shell">
         <div className="file-viewer-head">
-          <div className="file-viewer-copy">
-            <span className="file-meta-detail">{viewerKind} | {selectedUpload.sizeLabel}</span>
-            <h3>{selectedUpload.name}</h3>
-            <p className="file-subtext">{t("uploads.added")} {selectedUpload.addedAt}</p>
-          </div>
-          <div className="file-viewer-actions">
-            {selectedUpload.source ? (
-              <a className="text-action" href={selectedUpload.source} target="_blank" rel="noreferrer">
-                {t("viewer.openSource")}
-              </a>
-            ) : null}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <button
+              className="icon-only-button"
+              type="button"
+              onClick={toggleHeaderExpansion}
+              style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit", fontWeight: "bold" }}
+            >
+              {isHeaderExpanded ? <ChevronDown size={18} /> : <ChevronDown size={18} style={{ transform: "rotate(-90deg)", transition: "transform 0.2s" }} />}
+              <span style={{ fontSize: "16px", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", maxWidth: "200px" }}>
+                {selectedUpload.name}
+              </span>
+            </button>
+
             <button className="icon-only-button" type="button" onClick={() => onRemoveUpload(selectedUpload.id)} aria-label={t("uploads.remove")}>
               <Trash2 size={17} strokeWidth={1.8} />
             </button>
+          </div>
+
+          <div
+            style={{
+              maxHeight: isHeaderExpanded ? "200px" : "0px",
+              overflow: "hidden",
+              transition: "max-height 0.3s ease-in-out, opacity 0.3s ease-in-out",
+              opacity: isHeaderExpanded ? 1 : 0,
+              paddingTop: isHeaderExpanded ? 12 : 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              borderBottom: isHeaderExpanded ? "1px solid var(--border)" : "none",
+              paddingBottom: isHeaderExpanded ? 12 : 0
+            }}
+          >
+            <div className="file-viewer-copy">
+              <span className="file-meta-detail" style={{ textTransform: "uppercase", fontSize: "11px", fontWeight: "bold", letterSpacing: "0.05em" }}>
+                {viewerKind}
+              </span>
+              <span className="file-meta-detail">{selectedUpload.sizeLabel}</span>
+              <p className="file-subtext" style={{ margin: 0 }}>{t("uploads.added")} {selectedUpload.addedAt}</p>
+            </div>
+            <div className="file-viewer-actions" style={{ marginTop: 4 }}>
+              {selectedUpload.source ? (
+                <a className="text-action" href={selectedUpload.source} target="_blank" rel="noreferrer" style={{ fontSize: "13px" }}>
+                  {t("viewer.openSource")}
+                </a>
+              ) : null}
+            </div>
           </div>
         </div>
 
