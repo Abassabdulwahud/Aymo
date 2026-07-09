@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, ChevronDown, ChevronUp, MoreVertical } from "lucide-react";
 import { LanguageCode, languageCodeToName, useI18n } from "../i18n";
 
@@ -27,6 +27,31 @@ export function AccountSettingsMenu({
   const [isOpen, setIsOpen] = useState(false);
   const [isThemeOpen, setIsThemeOpen] = useState(false);
   const [isLanguageOpen, setIsLanguageOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest(".account-menu-wrap")) {
+        setIsOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener("click", handleOutsideClick, { capture: true });
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("click", handleOutsideClick, { capture: true });
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
 
   const languageLabels: Record<LanguageCode, string> = {
     en: t("language.en"),
