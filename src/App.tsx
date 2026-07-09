@@ -1140,6 +1140,9 @@ export default function App() {
         const nextBody = `${prefix}${separatorBefore}${transcript}${separatorAfter}${suffix}`;
         const nextCursor = prefix.length + separatorBefore.length + transcript.length;
 
+        const scrollContainer = document.querySelector(".writing-document-scroll");
+        const prevScrollTop = scrollContainer ? scrollContainer.scrollTop : null;
+
         updateCurrentNote({
           body: nextBody,
         });
@@ -1147,6 +1150,9 @@ export default function App() {
         window.setTimeout(() => {
           editorRef.current?.focus();
           editorRef.current?.setSelectionRange(nextCursor, nextCursor);
+          if (scrollContainer && prevScrollTop !== null) {
+            scrollContainer.scrollTop = prevScrollTop;
+          }
         }, 0);
         setRecordingStatus(t("record.stoppedAdded"));
       } else if (!encounteredSpeechError) {
