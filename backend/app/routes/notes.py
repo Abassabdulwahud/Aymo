@@ -103,6 +103,111 @@ def create_note(
     return _get_note_or_404(db, current_user.id, note.id, language_code)
 
 
+# --- Trash Router Endpoints (MUST be registered before /{note_id} so "trash" is not parsed as an int) ---
+
+@router.get("/trash", response_model=NoteListResponse)
+def list_trashed_notes(
+    search: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    language_code: str = Depends(get_current_language),
+):
+    from ..repositories.scoped_queries import trashed_notes_for_user
+    query = trashed_notes_for_user(db, current_user.id).options(
+        selectinload(Note.tags),
+        selectinload(Note.files),
+    )
+    if search:
+        search_term = f"%{search.strip()}%"
+        query = query.filter((Note.title.ilike(search_term)) | (Note.body.ilike(search_term)))
+    items = query.order_by(Note.deleted_at.desc(), Note.id.desc()).all()
+    return NoteListResponse(items=items, total=len(items))
+
+
+@router.post("/trash/{note_id}/restore", response_model=NoteResponse)
+def restore_note(
+    note_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    language_code: str = Depends(get_current_language),
+):
+    from ..repositories.scoped_queries import trashed_note_for_user
+    note = trashed_note_for_user(db, current_user.id, note_id).first()
+    if not note:
+        raise HTTPException(status_code=404, detail=translate(language_code, "note_not_found"))
+    note.deleted_at = None
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+    return _get_note_or_404(db, current_user.id, note.id, language_code)
+
+
+@router.delete("/trash/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+def permanently_delete_note(
+    note_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    language_code: str = Depends(get_current_language),
+):
+    from ..repositories.scoped_queries import trashed_note_for_user
+    note = (
+        trashed_note_for_user(db, current_user.id, note_id)
+        .options(selectinload(Note.files))
+        .first()
+    )
+    if not note:
+        raise HTTPException(status_code=404, detail=translate(language_code, "note_not_found"))
+
+    for file_record in note.files:
+        _delete_uploaded_asset(file_record)
+        from ..models.source import Source
+        try:
+            db.query(Source).filter(
+                Source.note_id == file_record.note_id,
+                Source.public_url == file_record.file_url,
+            ).delete(synchronize_session=False)
+        except Exception:
+            pass
+
+    db.delete(note)
+    db.commit()
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.headers["X-AYMO-Message"] = translate(language_code, "note_deleted_permanently")
+    return response
+
+
+@router.delete("/trash", status_code=status.HTTP_204_NO_CONTENT)
+def empty_trash(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    language_code: str = Depends(get_current_language),
+):
+    from ..repositories.scoped_queries import trashed_notes_for_user
+    notes = (
+        trashed_notes_for_user(db, current_user.id)
+        .options(selectinload(Note.files))
+        .all()
+    )
+    for note in notes:
+        for file_record in note.files:
+            _delete_uploaded_asset(file_record)
+            from ..models.source import Source
+            try:
+                db.query(Source).filter(
+                    Source.note_id == file_record.note_id,
+                    Source.public_url == file_record.file_url,
+                ).delete(synchronize_session=False)
+            except Exception:
+                pass
+        db.delete(note)
+    db.commit()
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.headers["X-AYMO-Message"] = translate(language_code, "trash_emptied")
+    return response
+
+
+# --- Per-note CRUD (must come AFTER literal-path routes like /trash) ---
+
 @router.get("/{note_id}", response_model=NoteResponse)
 def get_note(
     note_id: int,
@@ -199,110 +304,4 @@ def delete_note(
     db.commit()
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     response.headers["X-AYMO-Message"] = translate(language_code, "note_deleted")
-    return response
-
-
-# --- Trash Router Endpoints ---
-
-@router.get("/trash", response_model=NoteListResponse)
-def list_trashed_notes(
-    search: Optional[str] = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    language_code: str = Depends(get_current_language),
-):
-    from ..repositories.scoped_queries import trashed_notes_for_user
-    query = trashed_notes_for_user(db, current_user.id).options(
-        selectinload(Note.tags),
-        selectinload(Note.files),
-    )
-    if search:
-        search_term = f"%{search.strip()}%"
-        query = query.filter((Note.title.ilike(search_term)) | (Note.body.ilike(search_term)))
-    items = query.order_by(Note.deleted_at.desc(), Note.id.desc()).all()
-    return NoteListResponse(items=items, total=len(items))
-
-
-@router.post("/trash/{note_id}/restore", response_model=NoteResponse)
-def restore_note(
-    note_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    language_code: str = Depends(get_current_language),
-):
-    from ..repositories.scoped_queries import trashed_note_for_user
-    note = trashed_note_for_user(db, current_user.id, note_id).first()
-    if not note:
-        raise HTTPException(status_code=404, detail=translate(language_code, "note_not_found"))
-    note.deleted_at = None
-    db.add(note)
-    db.commit()
-    db.refresh(note)
-    return _get_note_or_404(db, current_user.id, note.id, language_code)
-
-
-@router.delete("/trash/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
-def permanently_delete_note(
-    note_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    language_code: str = Depends(get_current_language),
-):
-    from ..repositories.scoped_queries import trashed_note_for_user
-    note = (
-        trashed_note_for_user(db, current_user.id, note_id)
-        .options(selectinload(Note.files))
-        .first()
-    )
-    if not note:
-        raise HTTPException(status_code=404, detail=translate(language_code, "note_not_found"))
-    
-    # 1. Clean up attached files from storage/Cloudinary
-    for file_record in note.files:
-        _delete_uploaded_asset(file_record)
-        # Delete matching Source record
-        from ..models.source import Source
-        try:
-            db.query(Source).filter(
-                Source.note_id == file_record.note_id,
-                Source.public_url == file_record.file_url,
-            ).delete(synchronize_session=False)
-        except Exception:
-            pass
-
-    # 2. Hard delete note from db (cascades blocks, embeddings, files)
-    db.delete(note)
-    db.commit()
-    response = Response(status_code=status.HTTP_204_NO_CONTENT)
-    response.headers["X-AYMO-Message"] = translate(language_code, "note_deleted_permanently")
-    return response
-
-
-@router.delete("/trash", status_code=status.HTTP_204_NO_CONTENT)
-def empty_trash(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    language_code: str = Depends(get_current_language),
-):
-    from ..repositories.scoped_queries import trashed_notes_for_user
-    notes = (
-        trashed_notes_for_user(db, current_user.id)
-        .options(selectinload(Note.files))
-        .all()
-    )
-    for note in notes:
-        for file_record in note.files:
-            _delete_uploaded_asset(file_record)
-            from ..models.source import Source
-            try:
-                db.query(Source).filter(
-                    Source.note_id == file_record.note_id,
-                    Source.public_url == file_record.file_url,
-                ).delete(synchronize_session=False)
-            except Exception:
-                pass
-        db.delete(note)
-    db.commit()
-    response = Response(status_code=status.HTTP_204_NO_CONTENT)
-    response.headers["X-AYMO-Message"] = translate(language_code, "trash_emptied")
     return response

@@ -77,9 +77,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   if (!response.ok) {
     let detail = "Request failed.";
     try {
-      const payload = (await response.json()) as { detail?: string };
-      if (payload.detail) {
-        detail = payload.detail;
+      const payload = (await response.json()) as { detail?: unknown };
+      if (payload.detail != null) {
+        detail =
+          typeof payload.detail === "string"
+            ? payload.detail
+            : JSON.stringify(payload.detail);
       }
     } catch {
       // Ignore JSON parsing errors for empty responses.
