@@ -471,15 +471,21 @@ export default function App() {
         if (mounted) {
           setIsWorkspaceLoading(true);
         }
-        const [preferences, noteItems, tagItems, trashedItems] = await Promise.all([
+        const [preferences, noteItems, tagItems] = await Promise.all([
           loadPreferences(authToken),
           listNotes(authToken),
           listTags(authToken),
-          listTrashedNotes(authToken),
         ]);
         if (!mounted) return;
 
-        setTrashedNoteCount(trashedItems.length);
+        // Load trash count independently — never let it block note loading
+        try {
+          const trashedItems = await listTrashedNotes(authToken);
+          if (mounted) setTrashedNoteCount(trashedItems.length);
+        } catch {
+          // Trash endpoint not yet available or failed — silently ignore
+          if (mounted) setTrashedNoteCount(0);
+        }
 
         const mappedNotes = noteItems.map((note) => mapNoteToHomeNote(note, noteLabels));
         lastSyncedRef.current = Object.fromEntries(
