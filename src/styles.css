@@ -2638,12 +2638,12 @@ body.page-note-view .note-split-divider::before {
   left: 50%;
   width: 1px;
   transform: translateX(-50%);
-  background: #e0e0e0;
+  background: rgba(0, 0, 0, 0.06);
   transition: background-color 160ms ease;
 }
 
 body.page-note-view .theme-root.theme-dark .note-split-divider::before {
-  background: color-mix(in srgb, var(--border) 82%, transparent);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 body.page-note-view .note-split-divider:hover,
@@ -2722,14 +2722,13 @@ body.page-note-view .writing-panel {
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  background: var(--bg);
+  background: #fafaf9;
   color: var(--text);
   box-sizing: border-box;
 }
 
 body.page-note-view .theme-root.theme-dark .writing-panel {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--bg) 94%, #27302d) 0%, var(--bg) 100%);
+  background: #11151a;
 }
 
 body.page-note-view .writing-document-scroll {
@@ -2741,17 +2740,19 @@ body.page-note-view .writing-document-scroll {
 body.page-note-view .writing-document {
   width: 100%;
   min-height: 100%;
-  padding: 54px clamp(28px, 5vw, 76px) 120px;
+  padding: 64px clamp(32px, 6vw, 84px) 140px;
   box-sizing: border-box;
+  background: #ffffff;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.015), 0 2px 8px rgba(0, 0, 0, 0.01);
 }
 
 body.page-note-view .theme-root.theme-dark .writing-document {
-  background: var(--document);
+  background: #181f25;
   color: var(--text);
   box-shadow:
-    inset 1px 0 0 color-mix(in srgb, var(--focus-ring) 14%, transparent),
-    inset -1px 0 0 color-mix(in srgb, var(--border) 68%, transparent),
-    0 28px 80px var(--shadow-color);
+    inset 1px 0 0 rgba(255, 255, 255, 0.02),
+    inset -1px 0 0 rgba(255, 255, 255, 0.02),
+    0 20px 60px rgba(0, 0, 0, 0.25);
 }
 
 body.page-note-view .title-input,
@@ -2776,39 +2777,37 @@ body.page-note-view .theme-root.theme-dark .editor {
 body.page-note-view .title-input {
   display: block;
   width: 100%;
-  margin: 0 0 22px;
+  margin: 0 0 32px;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--text);
   font-family: inherit;
-  font-size: 46px;
+  font-size: 44px;
   font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: 0;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
   resize: none;
   overflow: hidden;
   box-sizing: border-box;
   word-break: break-word;
-  /* Prevent the textarea from ever shrinking narrower than its container */
   min-width: 0;
-  /* No min-height constraint — the title starts as one line and expands freely */
 }
 
 body.page-note-view .title-input::placeholder,
 body.page-note-view .editor::placeholder,
 body.page-note-view .assistant-chat-input::placeholder {
-  color: var(--muted);
+  color: rgba(0, 0, 0, 0.25);
 }
 
 body.page-note-view .theme-root.theme-dark .title-input::placeholder {
-  color: color-mix(in srgb, var(--muted) 74%, var(--document));
+  color: rgba(255, 255, 255, 0.16);
 }
 
 body.page-note-view .theme-root.theme-dark .editor::placeholder,
 body.page-note-view .theme-root.theme-dark .assistant-chat-input::placeholder {
-  color: color-mix(in srgb, var(--muted) 82%, var(--bg));
+  color: rgba(255, 255, 255, 0.16);
 }
 
 body.page-note-view .editor-wrap {
@@ -2871,15 +2870,15 @@ body.page-note-view .writing-utility-bar {
   z-index: 6;
   flex: 0 0 auto;
   min-height: 68px;
-  padding: 14px clamp(28px, 5vw, 76px);
-  border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg) 94%, var(--soft));
+  padding: 14px clamp(32px, 6vw, 84px);
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  background: #ffffff;
   color: var(--text);
 }
 
 body.page-note-view .theme-root.theme-dark .writing-utility-bar {
-  border-top-color: color-mix(in srgb, var(--border) 72%, transparent);
-  background: color-mix(in srgb, var(--panel) 82%, var(--bg));
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  background: #181f25;
 }
 
 body.page-note-view .writing-mic-button.is-recording,
