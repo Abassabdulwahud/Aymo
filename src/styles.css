@@ -2722,13 +2722,13 @@ body.page-note-view .writing-panel {
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  background: #fafaf9;
+  background: #fafafa;
   color: var(--text);
   box-sizing: border-box;
 }
 
 body.page-note-view .theme-root.theme-dark .writing-panel {
-  background: #161a20; /* One uniform, clean dark slate surface for the entire left panel */
+  background: #14181f; /* Elegant, uniform Obsidian-like deep dark background */
 }
 
 body.page-note-view .writing-document-scroll {
@@ -2764,14 +2764,14 @@ body.page-note-view .assistant-chat-input {
 }
 
 body.page-note-view .theme-root.theme-dark .title-input {
-  color: #f0eadf;
+  color: #f5f0e6; /* Premium warm cream/parchment title */
 }
 
 body.page-note-view .theme-root.theme-dark .editor {
   background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
-  color: #ded7ca;
+  color: #e3ded5; /* High-readability soft parchment text */
 }
 
 body.page-note-view .title-input {
@@ -2798,16 +2798,16 @@ body.page-note-view .title-input {
 body.page-note-view .title-input::placeholder,
 body.page-note-view .editor::placeholder,
 body.page-note-view .assistant-chat-input::placeholder {
-  color: rgba(0, 0, 0, 0.25);
+  color: #b0b0b0; /* Softer light mode placeholder */
 }
 
 body.page-note-view .theme-root.theme-dark .title-input::placeholder {
-  color: rgba(255, 255, 255, 0.16);
+  color: #434c56; /* Subtle dark mode placeholders */
 }
 
 body.page-note-view .theme-root.theme-dark .editor::placeholder,
 body.page-note-view .theme-root.theme-dark .assistant-chat-input::placeholder {
-  color: rgba(255, 255, 255, 0.16);
+  color: #434c56;
 }
 
 body.page-note-view .editor-wrap {
@@ -2881,7 +2881,7 @@ body.page-note-view .writing-utility-bar {
 
 body.page-note-view .theme-root.theme-dark .writing-utility-bar {
   border-top: 1px solid rgba(255, 255, 255, 0.04);
-  background: #161a20;
+  background: #14181f;
 }
 
 body.page-note-view .writing-mic-button.is-recording,
