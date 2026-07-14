@@ -2728,7 +2728,7 @@ body.page-note-view .writing-panel {
 }
 
 body.page-note-view .theme-root.theme-dark .writing-panel {
-  background: #11151a;
+  background: #161a20; /* One uniform, clean dark slate surface for the entire left panel */
 }
 
 body.page-note-view .writing-document-scroll {
@@ -2742,26 +2742,23 @@ body.page-note-view .writing-document {
   min-height: 100%;
   padding: 64px clamp(32px, 6vw, 84px) 140px;
   box-sizing: border-box;
-  background: #ffffff;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.015), 0 2px 8px rgba(0, 0, 0, 0.01);
+  background: transparent;
+  box-shadow: none;
 }
 
 body.page-note-view .theme-root.theme-dark .writing-document {
-  background: #181f25;
+  background: transparent;
   color: var(--text);
-  box-shadow:
-    inset 1px 0 0 rgba(255, 255, 255, 0.02),
-    inset -1px 0 0 rgba(255, 255, 255, 0.02),
-    0 20px 60px rgba(0, 0, 0, 0.25);
+  box-shadow: none;
 }
 
 body.page-note-view .title-input,
 body.page-note-view .editor,
 body.page-note-view .assistant-chat-input {
-  border: 0;
-  outline: 0;
-  box-shadow: none;
-  background: transparent;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
   color: var(--text);
   font-family: inherit;
 }
@@ -2771,6 +2768,9 @@ body.page-note-view .theme-root.theme-dark .title-input {
 }
 
 body.page-note-view .theme-root.theme-dark .editor {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
   color: #ded7ca;
 }
 
@@ -2823,6 +2823,9 @@ body.page-note-view .editor {
   resize: none;
   overflow: hidden;
   border-radius: 0;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
   font-size: 18px;
   line-height: 1.82;
 }
@@ -2878,7 +2881,7 @@ body.page-note-view .writing-utility-bar {
 
 body.page-note-view .theme-root.theme-dark .writing-utility-bar {
   border-top: 1px solid rgba(255, 255, 255, 0.04);
-  background: #181f25;
+  background: #161a20;
 }
 
 body.page-note-view .writing-mic-button.is-recording,
