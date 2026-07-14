@@ -3185,7 +3185,7 @@ body.page-note-view .assistant-conversation-scroll {
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: 0 4px 0 0;
+  padding: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -3193,7 +3193,8 @@ body.page-note-view .assistant-conversation-scroll {
 body.page-note-view .assistant-conversation {
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 24px;
+  padding: 4px 6px 8px;
   min-height: 100%;
   justify-content: flex-end;
 }
@@ -3205,15 +3206,25 @@ body.page-note-view .chat-message {
   border-radius: 0;
   background: transparent;
   color: var(--text);
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 body.page-note-view .chat-message-user {
   align-self: flex-end;
-  max-width: min(76%, 520px);
-  padding: 9px 13px;
-  border-radius: 999px;
+  /* 70% of the chat panel, capped at 480px — prevents bubbles from
+     spanning the full width while still giving room for long text. */
+  max-width: min(70%, 480px);
+  padding: 12px 18px;
+  /* Asymmetric border-radius: flat on the bottom-right like modern
+     chat apps (ChatGPT, Claude) so multi-line messages look like
+     speech bubbles rather than stretched pills. */
+  border-radius: 20px 20px 6px 20px;
   background: var(--bg);
   color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 body.page-note-view .theme-root.theme-dark .chat-message-user {
@@ -3223,19 +3234,23 @@ body.page-note-view .theme-root.theme-dark .chat-message-user {
 
 body.page-note-view .chat-message p {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.65;
 }
 
 body.page-note-view .chat-message-assistant {
-  align-self: stretch;
+  align-self: flex-start;
+  width: 100%;
+  max-width: 100%;
 }
 
 body.page-note-view .assistant-markdown {
-  max-width: 720px;
+  max-width: min(720px, 100%);
   color: var(--text);
   font-size: 15px;
   line-height: 1.75;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 body.page-note-view .assistant-markdown code,
@@ -3754,19 +3769,30 @@ body.page-note-view .theme-root.theme-dark ::selection {
 }
 
 .formatter-paragraph {
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--text);
+  /* Inherit the parent font-size so page-note-view's 15px override is respected. */
+  font-size: inherit;
+  line-height: 1.7;
+  color: inherit;
   margin: 0;
   word-break: break-word;
   overflow-wrap: break-word;
   white-space: pre-wrap;
 }
 
+.formatter-paragraph p {
+  margin: 0 0 0.6em;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.formatter-paragraph p:last-child {
+  margin-bottom: 0;
+}
+
 .formatter-list {
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--text);
+  font-size: inherit;
+  line-height: 1.7;
+  color: inherit;
   margin: 0;
   word-break: break-word;
   overflow-wrap: break-word;
@@ -3803,9 +3829,9 @@ body.page-note-view .theme-root.theme-dark ::selection {
 }
 
 .formatter-conclusion-content {
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--text);
+  font-size: inherit;
+  line-height: 1.7;
+  color: inherit;
   flex: 1;
 }
 
@@ -3832,9 +3858,9 @@ body.page-note-view .theme-root.theme-dark ::selection {
 }
 
 .formatter-comparison-content {
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--text);
+  font-size: inherit;
+  line-height: 1.7;
+  color: inherit;
   flex: 1;
 }
 
