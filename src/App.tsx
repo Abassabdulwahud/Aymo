@@ -212,6 +212,7 @@ function mapCachedResponsesToMessages(
       id: `${item.id}-assistant`,
       role: "assistant" as const,
       content: item.response,
+      status: "done" as const,
     },
   ]);
 }
@@ -1255,6 +1256,8 @@ export default function App() {
     }));
 
     const assistantMessageId = `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Insert the bubble immediately with "thinking" status so the user sees
+    // acknowledgement before the first token arrives.
     setChatMessagesByNote((prev) => ({
       ...prev,
       [selectedNote.id]: [
@@ -1263,20 +1266,25 @@ export default function App() {
           id: assistantMessageId,
           role: "assistant",
           content: "",
+          status: "thinking" as const,
         },
       ],
     }));
+
+    let firstDelta = true;
 
     try {
       const streamed = await streamAIChat(authToken, selectedNote.id, prompt, aiProvider, {
         onDelta: (chunk) => {
           setChatMessagesByNote((prev) => ({
             ...prev,
-            [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
-              message.id === assistantMessageId
-                ? { ...message, content: `${message.content}${chunk}` }
-                : message,
-            ),
+            [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) => {
+              if (message.id !== assistantMessageId) return message;
+              // First delta: switch status from "thinking" → "streaming"
+              const nextStatus = firstDelta ? "streaming" as const : message.status as "streaming";
+              firstDelta = false;
+              return { ...message, content: `${message.content}${chunk}`, status: nextStatus };
+            }),
           }));
         },
       });
@@ -1286,7 +1294,17 @@ export default function App() {
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
             message.id === assistantMessageId
-              ? { ...message, content: streamed.content }
+              ? { ...message, content: streamed.content, status: "done" as const }
+              : message,
+          ),
+        }));
+      } else {
+        // Mark streaming complete
+        setChatMessagesByNote((prev) => ({
+          ...prev,
+          [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
+            message.id === assistantMessageId
+              ? { ...message, status: "done" as const }
               : message,
           ),
         }));
@@ -1298,7 +1316,7 @@ export default function App() {
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
             message.id === assistantMessageId
-              ? { ...message, content: fallback.response }
+              ? { ...message, content: fallback.response, status: "done" as const }
               : message,
           ),
         }));
@@ -1313,7 +1331,7 @@ export default function App() {
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
             message.id === assistantMessageId
-              ? { ...message, content: `AI error: ${detail}` }
+              ? { ...message, content: `AI error: ${detail}`, status: "error" as const }
               : message,
           ),
         }));
