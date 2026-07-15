@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./styles.css";
 import { useRef } from "react";
+import { SmoothStreamer } from "./utils/smoothStreamer";
 import { MoreVertical, PanelRightClose } from "lucide-react";
 import { matchPath, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "./services/apiClient";
@@ -1273,33 +1274,21 @@ export default function App() {
 
     let firstDelta = true;
 
-    try {
-      const streamed = await streamAIChat(authToken, selectedNote.id, prompt, aiProvider, {
-        onDelta: (chunk) => {
-          setChatMessagesByNote((prev) => ({
-            ...prev,
-            [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) => {
-              if (message.id !== assistantMessageId) return message;
-              // First delta: switch status from "thinking" → "streaming"
-              const nextStatus = firstDelta ? "streaming" as const : message.status as "streaming";
-              firstDelta = false;
-              return { ...message, content: `${message.content}${chunk}`, status: nextStatus };
-            }),
-          }));
-        },
-      });
-
-      if (streamed.cached) {
+    // Instantiate the character-by-character typewriter loop
+    const streamer = new SmoothStreamer(
+      (text) => {
         setChatMessagesByNote((prev) => ({
           ...prev,
-          [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
-            message.id === assistantMessageId
-              ? { ...message, content: streamed.content, status: "done" as const }
-              : message,
-          ),
+          [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) => {
+            if (message.id !== assistantMessageId) return message;
+            const nextStatus = firstDelta ? ("streaming" as const) : (message.status as "streaming");
+            firstDelta = false;
+            return { ...message, content: text, status: nextStatus };
+          }),
         }));
-      } else {
-        // Mark streaming complete
+      },
+      () => {
+        // Drained and fully typed
         setChatMessagesByNote((prev) => ({
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
@@ -1309,7 +1298,30 @@ export default function App() {
           ),
         }));
       }
+    );
+
+    try {
+      const streamed = await streamAIChat(authToken, selectedNote.id, prompt, aiProvider, {
+        onDelta: (chunk) => {
+          streamer.enqueue(chunk);
+        },
+      });
+
+      if (streamed.cached) {
+        streamer.destroy();
+        setChatMessagesByNote((prev) => ({
+          ...prev,
+          [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
+            message.id === assistantMessageId
+              ? { ...message, content: streamed.content, status: "done" as const }
+              : message,
+          ),
+        }));
+      } else {
+        streamer.finish();
+      }
     } catch (streamError) {
+      streamer.destroy();
       try {
         const fallback = await chatWithAIHttp(authToken, selectedNote.id, prompt, aiProvider);
         setChatMessagesByNote((prev) => ({

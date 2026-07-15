@@ -14,6 +14,7 @@ import { languageCodeToSpeechLocale } from "../i18n";
 import { useI18n } from "../i18n";
 import { AIProvider, ChatMessage } from "../types";
 import { AI_PROVIDER_OPTIONS } from "../constants/aiProviders";
+import { getSignatureProgressPhrase } from "../utils/aiStatusManager";
 
 interface AIAssistantPanelProps {
   messages: ChatMessage[];
@@ -47,43 +48,22 @@ declare global {
 }
 
 /**
- * Returns a context-aware "thinking" phrase based on the user's prompt text.
- * Phrases cycle through a short list to give the feeling the AI is working.
+ * Cycling thinking indicator component: cycles through the pool of signature progress
+ * phrases every 2.0s, while appending animated trailing dots every 420ms.
  */
-function getThinkingPhrase(prompt: string): string {
-  const lower = prompt.toLowerCase();
-  if (lower.includes("summar") || lower.includes("overview") || lower.includes("tldr")) {
-    return "Summarizing your note…";
-  }
-  if (lower.includes("explain") || lower.includes("what is") || lower.includes("define")) {
-    return "Looking that up…";
-  }
-  if (lower.includes("translate") || lower.includes("french") || lower.includes("arabic") || lower.includes("spanish")) {
-    return "Translating…";
-  }
-  if (lower.includes("question") || lower.includes("quiz") || lower.includes("test")) {
-    return "Generating questions…";
-  }
-  if (lower.includes("improv") || lower.includes("rewrite") || lower.includes("rephrase")) {
-    return "Reworking this…";
-  }
-  if (lower.includes("pdf") || lower.includes("document") || lower.includes("file") || lower.includes("upload")) {
-    return "Reading your document…";
-  }
-  if (lower.includes("video") || lower.includes("audio") || lower.includes("transcript")) {
-    return "Analyzing the media…";
-  }
-  if (lower.includes("note") || lower.includes("content")) {
-    return "Reading your note…";
-  }
-  return "Thinking…";
-}
-
-/** Cycling thinking dots animation: "Thinking…" → "Thinking…." → "Thinking….." */
 function ThinkingIndicator({ prompt }: { prompt: string }) {
-  const phrase = useMemo(() => getThinkingPhrase(prompt), [prompt]);
+  const [phaseIndex, setPhaseIndex] = useState(0);
   const [dotCount, setDotCount] = useState(1);
 
+  // Cycle the phrase index every 2 seconds
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setPhaseIndex((prev) => prev + 1);
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Cycle the animated dots every 420ms
   useEffect(() => {
     const id = window.setInterval(() => {
       setDotCount((d) => (d % 3) + 1);
@@ -91,11 +71,12 @@ function ThinkingIndicator({ prompt }: { prompt: string }) {
     return () => window.clearInterval(id);
   }, []);
 
+  const phrase = useMemo(() => getSignatureProgressPhrase(prompt, phaseIndex), [prompt, phaseIndex]);
   const dots = ".".repeat(dotCount);
 
   return (
     <span className="ai-thinking-indicator" aria-label="AI is thinking" aria-live="polite">
-      {phrase.replace(/…$/, "")}{dots}
+      {phrase}{dots}
     </span>
   );
 }
