@@ -1,5 +1,5 @@
 import { KeyboardEvent, MouseEvent, RefObject, useLayoutEffect, useRef, useState } from "react";
-import { Bold, Italic, Mic, Underline } from "lucide-react";
+import { Mic } from "lucide-react";
 import { useI18n } from "../i18n";
 import { cleanPastedText } from "../utils/pasteCleaner";
 import { EditorContextMenu } from "./EditorContextMenu";
@@ -18,8 +18,6 @@ interface WritingSectionProps {
   notes?: Array<{ id: number; title: string; cardTitle: string }>;
   onAskAI?: (prompt: string) => void;
 }
-
-type FormatKind = "bold" | "italic" | "underline";
 
 export function WritingSection({
   title,
@@ -58,7 +56,6 @@ export function WritingSection({
     el.style.height = `${el.scrollHeight}px`;
   }, [body]);
 
-  const hasSelection = selection.end > selection.start;
   const selectedText = body.slice(selection.start, selection.end);
 
   const syncSelection = (textarea: HTMLTextAreaElement) => {
@@ -85,40 +82,6 @@ export function WritingSection({
       editorRef.current?.focus();
       editorRef.current?.setSelectionRange(0, 0);
     }
-  };
-
-  const applyFormat = (kind: FormatKind) => {
-    if (!hasSelection || !editorRef.current) {
-      return;
-    }
-
-    const { start, end } = selection;
-    const selectedText = body.slice(start, end);
-    const wrappedText =
-      kind === "bold"
-        ? `**${selectedText}**`
-        : kind === "italic"
-          ? `_${selectedText}_`
-          : `<u>${selectedText}</u>`;
-    const nextBody = `${body.slice(0, start)}${wrappedText}${body.slice(end)}`;
-    const nextEnd = start + wrappedText.length;
-
-    onBodyChange(nextBody);
-    setSelection({ start, end: nextEnd });
-    onCursorChange(start, nextEnd);
-
-    window.requestAnimationFrame(() => {
-      editorRef.current?.focus();
-      editorRef.current?.setSelectionRange(start, nextEnd);
-    });
-  };
-
-  const handleContextMenu = (e: MouseEvent<HTMLTextAreaElement>) => {
-    e.preventDefault();
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-    });
   };
 
   // Helper to extract paragraph surrounding the cursor when nothing is selected
@@ -352,24 +315,6 @@ export function WritingSection({
           />
 
           <div className="editor-wrap">
-            {hasSelection ? (
-              <div className="floating-format-toolbar" role="toolbar" aria-label="Text formatting">
-                <button type="button" aria-label="Bold" onMouseDown={(event) => event.preventDefault()} onClick={() => applyFormat("bold")}>
-                  <Bold size={16} strokeWidth={2} />
-                </button>
-                <button type="button" aria-label="Italic" onMouseDown={(event) => event.preventDefault()} onClick={() => applyFormat("italic")}>
-                  <Italic size={16} strokeWidth={2} />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Underline"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyFormat("underline")}
-                >
-                  <Underline size={16} strokeWidth={2} />
-                </button>
-              </div>
-            ) : null}
 
             <textarea
               id="note-body"
@@ -383,7 +328,13 @@ export function WritingSection({
               onClick={(event) => syncSelection(event.currentTarget)}
               onKeyUp={(event) => syncSelection(event.currentTarget)}
               onSelect={(event) => syncSelection(event.currentTarget)}
-              onContextMenu={handleContextMenu}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                });
+              }}
               onPaste={(event) => {
                 const clipboardValue = event.clipboardData.getData("text/plain");
                 if (!clipboardValue) {

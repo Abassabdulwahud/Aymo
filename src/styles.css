@@ -2830,33 +2830,7 @@ body.page-note-view .editor {
   line-height: 1.82;
 }
 
-body.page-note-view .floating-format-toolbar {
-  position: absolute;
-  top: -44px;
-  left: 0;
-  z-index: 5;
-  display: inline-flex;
-  gap: 2px;
-  padding: 5px;
-  border-radius: 999px;
-  background: var(--text);
-  color: var(--bg);
-}
 
-body.page-note-view .floating-format-toolbar button {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  color: var(--bg);
-  cursor: pointer;
-}
-
-body.page-note-view .floating-format-toolbar button:hover {
-  background: var(--bg);
-  color: var(--text);
-}
 
 body.page-note-view .writing-mic-button {
   display: grid;
