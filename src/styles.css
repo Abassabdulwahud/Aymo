@@ -4249,10 +4249,8 @@ body.page-note-view .theme-root.theme-dark ::selection {
   position: relative;
 }
 
+/* .editor-context-submenu position is now set dynamically by SmartSubmenu (JS) */
 .editor-context-submenu {
-  position: absolute;
-  top: -6px;
-  left: calc(100% - 2px);
   min-width: 180px;
   padding: 6px;
   background: #ffffff;
@@ -4263,7 +4261,6 @@ body.page-note-view .theme-root.theme-dark ::selection {
   flex-direction: column;
   gap: 1px;
   animation: contextMenuEnter 0.12s cubic-bezier(0.16, 1, 0.3, 1);
-  z-index: 10000;
   box-sizing: border-box;
 }
 
@@ -4308,33 +4305,7 @@ body.page-note-view .theme-root.theme-dark ::selection {
   color: #ffffff;
 }
 
-.editor-context-submenu-inner {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: calc(100% - 2px);
-  min-width: 180px;
-  padding: 6px;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 8px;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08);
-  flex-direction: column;
-  gap: 1px;
-  animation: contextMenuEnter 0.12s cubic-bezier(0.16, 1, 0.3, 1);
-  z-index: 10001;
-  box-sizing: border-box;
-}
 
-.theme-root.theme-dark .editor-context-submenu-inner {
-  background: #1c232b;
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
-}
-
-.menu-item-parent-inner:hover .editor-context-submenu-inner {
-  display: flex;
-}
 
 /* Color indicator chips */
 .color-indicator {

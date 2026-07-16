@@ -1,4 +1,95 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+
+const MARGIN = 10; // safety gap from viewport edges in px
+
+interface SmartSubmenuProps {
+  parentRef: React.RefObject<HTMLElement | null>;
+  children: React.ReactNode;
+  className?: string;
+  role?: string;
+}
+
+/**
+ * SmartSubmenu renders a floating submenu that is always positioned fully
+ * within the visible viewport.
+ *
+ * Strategy:
+ * 1. Mount with `visibility: hidden` so the browser can measure its true size.
+ * 2. In useLayoutEffect (before paint), read the parent anchor rect + submenu
+ *    dimensions and compute the best position.
+ * 3. Apply the position and flip to `visibility: visible` in one synchronous
+ *    layout cycle — no flicker.
+ *
+ * Horizontal preference: opens to the right of the parent.
+ *   Flips left if there is not enough room on the right.
+ * Vertical preference: aligns the top of the submenu with the top of the
+ *   parent row. Shifts upward if the bottom would overflow.
+ */
+export function SmartSubmenu({
+  parentRef,
+  children,
+  className = "",
+  role = "menu",
+}: SmartSubmenuProps) {
+  const submenuRef = useRef<HTMLDivElement | null>(null);
+  const [style, setStyle] = useState<React.CSSProperties>({
+    position: "fixed",
+    visibility: "hidden",
+    top: 0,
+    left: 0,
+    zIndex: 10000,
+  });
+
+  useLayoutEffect(() => {
+    const submenu = submenuRef.current;
+    const parent = parentRef.current;
+    if (!submenu || !parent) return;
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const parentRect = parent.getBoundingClientRect();
+    const submenuRect = submenu.getBoundingClientRect();
+    const sw = submenuRect.width;
+    const sh = submenuRect.height;
+
+    // ── Horizontal ────────────────────────────────────────────────────────
+    // Default: open to the right of the parent
+    let left = parentRect.right - 2;
+    if (left + sw > vw - MARGIN) {
+      // Not enough room on the right → open to the left
+      left = parentRect.left - sw + 2;
+    }
+    // Final clamp so it never exits the viewport
+    left = Math.max(MARGIN, Math.min(left, vw - sw - MARGIN));
+
+    // ── Vertical ──────────────────────────────────────────────────────────
+    // Default: top of submenu aligns with top of parent row
+    let top = parentRect.top;
+    if (top + sh > vh - MARGIN) {
+      // Shift up so the bottom edge stays inside
+      top = vh - sh - MARGIN;
+    }
+    top = Math.max(MARGIN, top);
+
+    setStyle({
+      position: "fixed",
+      visibility: "visible",
+      top,
+      left,
+      zIndex: 10000,
+    });
+  }, []); // runs once on mount — parent geometry is stable while the submenu is open
+
+  return (
+    <div ref={submenuRef} className={`editor-context-submenu ${className}`} role={role} style={style}>
+      {children}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Main component interfaces
+// ────────────────────────────────────────────────────────────────────────────
 
 interface EditorContextMenuProps {
   x: number;
@@ -21,31 +112,34 @@ export function EditorContextMenu({
   const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
   const [coords, setCoords] = useState({ top: y, left: x });
 
-  // Keep menu within screen boundaries
+  // Refs used so SmartSubmenu can read parent geometry
+  const formatTriggerRef = useRef<HTMLDivElement | null>(null);
+  const insertTriggerRef = useRef<HTMLDivElement | null>(null);
+  const aiTriggerRef = useRef<HTMLDivElement | null>(null);
+
+  // Keep main menu within screen boundaries
   useEffect(() => {
     const menuEl = menuRef.current;
     if (!menuEl) return;
 
     const rect = menuEl.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
 
     let nextLeft = x;
     let nextTop = y;
 
-    // Check right edge overflow
-    if (x + rect.width > viewportWidth) {
-      nextLeft = Math.max(8, viewportWidth - rect.width - 8);
+    if (x + rect.width > vw - MARGIN) {
+      nextLeft = Math.max(MARGIN, vw - rect.width - MARGIN);
     }
-    // Check bottom edge overflow
-    if (y + rect.height > viewportHeight) {
-      nextTop = Math.max(8, viewportHeight - rect.height - 8);
+    if (y + rect.height > vh - MARGIN) {
+      nextTop = Math.max(MARGIN, vh - rect.height - MARGIN);
     }
 
     setCoords({ top: nextTop, left: nextLeft });
   }, [x, y]);
 
-  // Click outside listener
+  // Click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -56,12 +150,10 @@ export function EditorContextMenu({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [onClose]);
 
-  // Escape key listener
+  // Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
+      if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
@@ -74,7 +166,6 @@ export function EditorContextMenu({
 
   const hasSelection = selectedText.trim().length > 0;
 
-  // Premium academic color palettes for submenus
   const textColors = [
     { name: "Default", color: "" },
     { name: "Muted Gray", color: "#8b949e" },
@@ -97,47 +188,39 @@ export function EditorContextMenu({
     <div
       ref={menuRef}
       className="editor-context-menu"
-      style={{
-        position: "fixed",
-        top: `${coords.top}px`,
-        left: `${coords.left}px`,
-        zIndex: 9999,
-      }}
+      style={{ position: "fixed", top: `${coords.top}px`, left: `${coords.left}px`, zIndex: 9999 }}
       role="menu"
       aria-label="Editor context actions"
     >
-      {/* Clipboard section */}
+      {/* ── Clipboard ── */}
       <button type="button" role="menuitem" onClick={() => handleItemClick("cut")}>
-        Cut
-        <span className="shortcut-label">Ctrl+X</span>
+        Cut <span className="shortcut-label">Ctrl+X</span>
       </button>
       <button type="button" role="menuitem" onClick={() => handleItemClick("copy")}>
-        Copy
-        <span className="shortcut-label">Ctrl+C</span>
+        Copy <span className="shortcut-label">Ctrl+C</span>
       </button>
       <button type="button" role="menuitem" onClick={() => handleItemClick("paste")}>
-        Paste
-        <span className="shortcut-label">Ctrl+V</span>
+        Paste <span className="shortcut-label">Ctrl+V</span>
       </button>
       <button type="button" role="menuitem" onClick={() => handleItemClick("pastePlain")}>
-        Paste as Plain Text
-        <span className="shortcut-label">Ctrl+Shift+V</span>
+        Paste as Plain Text <span className="shortcut-label">Ctrl+Shift+V</span>
       </button>
 
       <div className="menu-divider" />
 
-      {/* Format Submenu trigger */}
+      {/* ── Format submenu ── */}
       <div
+        ref={formatTriggerRef}
         className="menu-item-parent"
         onMouseEnter={() => setActiveSubmenu("format")}
         onMouseLeave={() => setActiveSubmenu(null)}
       >
         <button type="button" className="has-submenu" aria-haspopup="true">
-          Format
-          <span className="submenu-arrow">▶</span>
+          Format <span className="submenu-arrow">▶</span>
         </button>
+
         {activeSubmenu === "format" && (
-          <div className="editor-context-submenu format-submenu" role="menu">
+          <SmartSubmenu parentRef={formatTriggerRef} className="format-submenu">
             <button type="button" role="menuitem" onClick={() => handleItemClick("bold")}>
               Bold <span className="shortcut-label">Ctrl+B</span>
             </button>
@@ -165,65 +248,33 @@ export function EditorContextMenu({
 
             <div className="menu-divider" />
 
-            {/* Text Color Submenu */}
-            <div className="menu-item-parent-inner">
-              <span className="submenu-label">Text Color <span className="submenu-arrow">▶</span></span>
-              <div className="editor-context-submenu-inner" role="menu">
-                {textColors.map((color) => (
-                  <button
-                    key={color.name}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => handleItemClick("textColor", color.color)}
-                  >
-                    {color.color ? (
-                      <span className="color-indicator" style={{ backgroundColor: color.color }} />
-                    ) : (
-                      <span className="color-indicator clear" />
-                    )}
-                    {color.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Background Color Submenu */}
-            <div className="menu-item-parent-inner">
-              <span className="submenu-label">Background Color <span className="submenu-arrow">▶</span></span>
-              <div className="editor-context-submenu-inner" role="menu">
-                {bgColors.map((color) => (
-                  <button
-                    key={color.name}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => handleItemClick("bgColor", color.color)}
-                  >
-                    {color.color ? (
-                      <span className="color-indicator" style={{ backgroundColor: color.color }} />
-                    ) : (
-                      <span className="color-indicator clear" />
-                    )}
-                    {color.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+            <ColorSubmenu
+              label="Text Color"
+              items={textColors}
+              onPick={(color) => handleItemClick("textColor", color)}
+            />
+            <ColorSubmenu
+              label="Background Color"
+              items={bgColors}
+              onPick={(color) => handleItemClick("bgColor", color)}
+            />
+          </SmartSubmenu>
         )}
       </div>
 
-      {/* Insert Submenu trigger */}
+      {/* ── Insert submenu ── */}
       <div
+        ref={insertTriggerRef}
         className="menu-item-parent"
         onMouseEnter={() => setActiveSubmenu("insert")}
         onMouseLeave={() => setActiveSubmenu(null)}
       >
         <button type="button" className="has-submenu" aria-haspopup="true">
-          Insert
-          <span className="submenu-arrow">▶</span>
+          Insert <span className="submenu-arrow">▶</span>
         </button>
+
         {activeSubmenu === "insert" && (
-          <div className="editor-context-submenu insert-submenu" role="menu">
+          <SmartSubmenu parentRef={insertTriggerRef} className="insert-submenu">
             <button type="button" role="menuitem" onClick={() => handleItemClick("insertTable")}>Table</button>
             <button type="button" role="menuitem" onClick={() => handleItemClick("insertCallout")}>Callout</button>
             <button type="button" role="menuitem" onClick={() => handleItemClick("insertDivider")}>Divider</button>
@@ -231,34 +282,14 @@ export function EditorContextMenu({
             <button type="button" role="menuitem" onClick={() => handleItemClick("insertCode")}>Code Block</button>
             <button type="button" role="menuitem" onClick={() => handleItemClick("insertMath")}>Math Block</button>
             <div className="menu-divider" />
-
-            {/* Linked Note Submenu */}
-            <div className="menu-item-parent-inner">
-              <span className="submenu-label">Linked Note <span className="submenu-arrow">▶</span></span>
-              <div className="editor-context-submenu-inner notes-list-menu" role="menu">
-                {notes.length === 0 ? (
-                  <span className="no-notes-label">No notes found</span>
-                ) : (
-                  notes.map((note) => (
-                    <button
-                      key={note.id}
-                      type="button"
-                      role="menuitem"
-                      onClick={() => handleItemClick("insertLinkedNote", note)}
-                    >
-                      {note.title || note.cardTitle}
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
+            <LinkedNoteSubmenu notes={notes} onPick={(note) => handleItemClick("insertLinkedNote", note)} />
+          </SmartSubmenu>
         )}
       </div>
 
       <div className="menu-divider" />
 
-      {/* Search Selected Text */}
+      {/* ── Search Selected Text ── */}
       <button
         type="button"
         role="menuitem"
@@ -268,35 +299,133 @@ export function EditorContextMenu({
         Search Selected Text
       </button>
 
-      {/* Ask AI Submenu trigger */}
+      {/* ── Ask AI submenu ── */}
       <div
+        ref={aiTriggerRef}
         className="menu-item-parent"
         onMouseEnter={() => setActiveSubmenu("ai")}
         onMouseLeave={() => setActiveSubmenu(null)}
       >
         <button type="button" className="has-submenu" aria-haspopup="true">
-          Ask AI
-          <span className="submenu-arrow">▶</span>
+          Ask AI <span className="submenu-arrow">▶</span>
         </button>
+
         {activeSubmenu === "ai" && (
-          <div className="editor-context-submenu ai-submenu" role="menu">
+          <SmartSubmenu parentRef={aiTriggerRef} className="ai-submenu">
             <button type="button" role="menuitem" onClick={() => handleItemClick("aiExplain")}>Explain</button>
             <button type="button" role="menuitem" onClick={() => handleItemClick("aiSummarize")}>Summarize</button>
             <button type="button" role="menuitem" onClick={() => handleItemClick("aiRewrite")}>Rewrite</button>
             <button type="button" role="menuitem" onClick={() => handleItemClick("aiSimplify")}>Simplify</button>
             <button type="button" role="menuitem" onClick={() => handleItemClick("aiTranslate")}>Translate</button>
             <button type="button" role="menuitem" onClick={() => handleItemClick("aiContinue")}>Continue Writing</button>
-          </div>
+          </SmartSubmenu>
         )}
       </div>
 
       <div className="menu-divider" />
 
-      {/* Select All */}
+      {/* ── Select All ── */}
       <button type="button" role="menuitem" onClick={() => handleItemClick("selectAll")}>
-        Select All
-        <span className="shortcut-label">Ctrl+A</span>
+        Select All <span className="shortcut-label">Ctrl+A</span>
       </button>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Reusable inner submenu helpers
+// ────────────────────────────────────────────────────────────────────────────
+
+interface ColorItem {
+  name: string;
+  color: string;
+}
+
+function ColorSubmenu({
+  label,
+  items,
+  onPick,
+}: {
+  label: string;
+  items: ColorItem[];
+  onPick: (color: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+
+  return (
+    <div
+      ref={triggerRef}
+      className="menu-item-parent-inner"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <span className="submenu-label">
+        {label} <span className="submenu-arrow">▶</span>
+      </span>
+
+      {open && (
+        <SmartSubmenu parentRef={triggerRef}>
+          {items.map((item) => (
+            <button
+              key={item.name}
+              type="button"
+              role="menuitem"
+              onClick={() => onPick(item.color)}
+            >
+              {item.color ? (
+                <span className="color-indicator" style={{ backgroundColor: item.color }} />
+              ) : (
+                <span className="color-indicator clear" />
+              )}
+              {item.name}
+            </button>
+          ))}
+        </SmartSubmenu>
+      )}
+    </div>
+  );
+}
+
+function LinkedNoteSubmenu({
+  notes,
+  onPick,
+}: {
+  notes: Array<{ id: number; title: string; cardTitle: string }>;
+  onPick: (note: { id: number; title: string; cardTitle: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+
+  return (
+    <div
+      ref={triggerRef}
+      className="menu-item-parent-inner"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <span className="submenu-label">
+        Linked Note <span className="submenu-arrow">▶</span>
+      </span>
+
+      {open && (
+        <SmartSubmenu parentRef={triggerRef} className="notes-list-menu">
+          {notes.length === 0 ? (
+            <span className="no-notes-label">No notes found</span>
+          ) : (
+            notes.map((note) => (
+              <button
+                key={note.id}
+                type="button"
+                role="menuitem"
+                onClick={() => onPick(note)}
+              >
+                {note.title || note.cardTitle}
+              </button>
+            ))
+          )}
+        </SmartSubmenu>
+      )}
     </div>
   );
 }
