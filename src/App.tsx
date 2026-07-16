@@ -1459,6 +1459,8 @@ export default function App() {
                 onBodyChange={(value) => updateCurrentNote({ body: value })}
                 onRecordToggle={handleRecordToggle}
                 onCursorChange={handleEditorCursorChange}
+                notes={notes}
+                onAskAI={handleAssistantPrompt}
               />
             </div>
           }

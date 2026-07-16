@@ -4174,4 +4174,238 @@ body.page-note-view .theme-root.theme-dark ::selection {
   }
 }
 
+/* ── Editor Context Menu Styles ───────────────────────────────────────── */
+
+.editor-context-menu {
+  min-width: 220px;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 16px -6px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: contextMenuEnter 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+.theme-root.theme-dark .editor-context-menu {
+  background: #1c232b;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+}
+
+.editor-context-menu button,
+.editor-context-submenu button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  font-size: 13.5px;
+  font-family: inherit;
+  text-align: left;
+  border-radius: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #333333;
+  transition: background-color 80ms ease, color 80ms ease;
+  box-sizing: border-box;
+}
+
+.theme-root.theme-dark .editor-context-menu button,
+.theme-root.theme-dark .editor-context-submenu button {
+  color: #ded7ca;
+}
+
+.editor-context-menu button:hover,
+.editor-context-submenu button:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #000000;
+}
+
+.theme-root.theme-dark .editor-context-menu button:hover,
+.theme-root.theme-dark .editor-context-submenu button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+}
+
+.editor-context-menu button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.editor-context-menu button:disabled:hover {
+  background: transparent;
+  color: #333333;
+}
+
+.theme-root.theme-dark .editor-context-menu button:disabled:hover {
+  color: #ded7ca;
+}
+
+/* Shortcut & sub indicators */
+.editor-context-menu .shortcut-label {
+  font-size: 11px;
+  opacity: 0.5;
+  font-weight: 500;
+}
+
+.editor-context-menu .submenu-arrow {
+  font-size: 10px;
+  opacity: 0.5;
+  margin-left:auto;
+}
+
+.editor-context-menu .menu-divider {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.06);
+  margin: 4px 2px;
+}
+
+.theme-root.theme-dark .editor-context-menu .menu-divider {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Submenu structure */
+.menu-item-parent {
+  position: relative;
+}
+
+.editor-context-submenu {
+  position: absolute;
+  top: -6px;
+  left: calc(100% - 2px);
+  min-width: 180px;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: contextMenuEnter 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 10000;
+  box-sizing: border-box;
+}
+
+.theme-root.theme-dark .editor-context-submenu {
+  background: #1c232b;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+}
+
+/* Nested submenus like Text color / BG color / Linked notes */
+.menu-item-parent-inner {
+  position: relative;
+  box-sizing: border-box;
+}
+
+.menu-item-parent-inner .submenu-label {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13.5px;
+  font-family: inherit;
+  text-align: left;
+  border-radius: 5px;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #333333;
+  box-sizing: border-box;
+}
+
+.theme-root.theme-dark .menu-item-parent-inner .submenu-label {
+  color: #ded7ca;
+}
+
+.menu-item-parent-inner:hover .submenu-label {
+  background: rgba(0, 0, 0, 0.05);
+  color: #000000;
+}
+
+.theme-root.theme-dark .menu-item-parent-inner:hover .submenu-label {
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+}
+
+.editor-context-submenu-inner {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: calc(100% - 2px);
+  min-width: 180px;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08);
+  flex-direction: column;
+  gap: 1px;
+  animation: contextMenuEnter 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 10001;
+  box-sizing: border-box;
+}
+
+.theme-root.theme-dark .editor-context-submenu-inner {
+  background: #1c232b;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+}
+
+.menu-item-parent-inner:hover .editor-context-submenu-inner {
+  display: flex;
+}
+
+/* Color indicator chips */
+.color-indicator {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,0.1);
+  margin-right: 4px;
+}
+
+.color-indicator.clear {
+  border: 1px dashed rgba(0,0,0,0.3);
+  background: transparent;
+}
+
+.theme-root.theme-dark .color-indicator.clear {
+  border-color: rgba(255,255,255,0.3);
+}
+
+/* Linked notes scrollable list */
+.notes-list-menu {
+  max-height: 200px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.notes-list-menu .no-notes-label {
+  display: block;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+@keyframes contextMenuEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+
 
