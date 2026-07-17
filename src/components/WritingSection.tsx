@@ -53,6 +53,10 @@ export function WritingSection({
   // Context Menu coordinates state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
+  // Track the last markdown string we emitted ourselves so the useEffect never
+  // feeds it back into the editor (which would show raw ** markers).
+  const lastEmittedMarkdownRef = useRef<string>(body);
+
   // Initialize TipTap Editor
   const editor = useEditor({
     extensions: [
@@ -87,8 +91,11 @@ export function WritingSection({
       },
     },
     onUpdate: ({ editor }) => {
-      // Serialize to Markdown to save
+      // Serialize the rich-text document to Markdown for the save pipeline.
       const md = (editor.storage as any).markdown.getMarkdown();
+      // Record it before calling onBodyChange so our own useEffect below
+      // can identify this as an internal update and skip setContent.
+      lastEmittedMarkdownRef.current = md;
       onBodyChange(md);
 
       // Notify of cursor changes
@@ -101,13 +108,17 @@ export function WritingSection({
     },
   });
 
-  // Keep editor content in sync with external updates (like switching notes)
+  // Sync editor content when body changes externally (e.g. the user switches
+  // notes).  We skip the update if body is the same string we just emitted
+  // from onUpdate — that would create a feedback loop where rich-text
+  // formatting (e.g. toggleBold) gets replaced with raw markdown markers.
   useEffect(() => {
     if (!editor) return;
-    const currentMarkdown = (editor.storage as any).markdown.getMarkdown();
-    if (body !== currentMarkdown) {
-      editor.commands.setContent(body);
-    }
+    // Identical to what we last serialised → nothing to do.
+    if (body === lastEmittedMarkdownRef.current) return;
+    // Different body (note switch / external write) → load fresh content.
+    editor.commands.setContent(body);
+    lastEmittedMarkdownRef.current = body;
   }, [body, editor]);
 
   // Backwards-compatible Ref Bridge:
