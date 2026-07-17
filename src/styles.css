@@ -2830,6 +2830,148 @@ body.page-note-view .editor {
   line-height: 1.82;
 }
 
+/* ── ProseMirror Rich Text Editor Styles ─────────────────────────────── */
+
+.ProseMirror {
+  outline: none !important;
+  min-height: 350px;
+}
+
+/* Headings */
+.ProseMirror h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  color: var(--text);
+}
+
+.ProseMirror h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-top: 1.4em;
+  margin-bottom: 0.4em;
+  color: var(--text);
+}
+
+.ProseMirror h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 1.3em;
+  margin-bottom: 0.3em;
+  color: var(--text);
+}
+
+/* Lists */
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 24px;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.ProseMirror ul {
+  list-style-type: disc;
+}
+
+.ProseMirror ol {
+  list-style-type: decimal;
+}
+
+.ProseMirror li {
+  margin-bottom: 0.25em;
+}
+
+/* Blockquotes */
+.ProseMirror blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 14px;
+  color: var(--muted);
+  font-style: italic;
+  margin-left: 0;
+  margin-right: 0;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+/* Code Blocks */
+.ProseMirror pre {
+  background: rgba(0, 0, 0, 0.04);
+  color: #c9def2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  padding: 14px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+.theme-root.theme-dark .ProseMirror pre {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ProseMirror code {
+  font-size: 0.9em;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.theme-root.theme-dark .ProseMirror code {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Tables */
+.ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 1.5em 0;
+  overflow: hidden;
+}
+
+.ProseMirror td,
+.ProseMirror th {
+  min-width: 1em;
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  vertical-align: top;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.ProseMirror th {
+  font-weight: bold;
+  text-align: left;
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.theme-root.theme-dark .ProseMirror th {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* Placeholder support for TipTap */
+.ProseMirror p.is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #b0b0b0;
+  pointer-events: none;
+  height: 0;
+}
+
+.theme-root.theme-dark .ProseMirror p.is-empty::before {
+  color: #434c56;
+}
+
+/* Horizontal Rules */
+.ProseMirror hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 2em 0;
+}
+
+
 
 
 body.page-note-view .writing-mic-button {

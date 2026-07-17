@@ -1,8 +1,22 @@
-import { KeyboardEvent, MouseEvent, RefObject, useLayoutEffect, useRef, useState } from "react";
+import { KeyboardEvent, MouseEvent, RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Mic } from "lucide-react";
 import { useI18n } from "../i18n";
-import { cleanPastedText } from "../utils/pasteCleaner";
 import { EditorContextMenu } from "./EditorContextMenu";
+
+// TipTap Rich-Text Editor imports
+import { useEditor, EditorContent } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Underline from "@tiptap/extension-underline";
+import Highlight from "@tiptap/extension-highlight";
+import Link from "@tiptap/extension-link";
+import { TextStyle } from "@tiptap/extension-text-style";
+import Color from "@tiptap/extension-color";
+import { Table } from "@tiptap/extension-table";
+import TableRow from "@tiptap/extension-table-row";
+import TableHeader from "@tiptap/extension-table-header";
+import TableCell from "@tiptap/extension-table-cell";
+import Placeholder from "@tiptap/extension-placeholder";
+import { Markdown } from "tiptap-markdown";
 
 interface WritingSectionProps {
   title: string;
@@ -10,7 +24,7 @@ interface WritingSectionProps {
   isRecording: boolean;
   recordingStatus: string;
   recordingError: string | null;
-  editorRef: RefObject<HTMLTextAreaElement>;
+  editorRef: RefObject<any>; // Changed to any to support the custom selection/focus bridge
   onTitleChange: (value: string) => void;
   onBodyChange: (value: string) => void;
   onRecordToggle: () => void | Promise<void>;
@@ -34,16 +48,88 @@ export function WritingSection({
   onAskAI,
 }: WritingSectionProps) {
   const { t } = useI18n();
-  const [selection, setSelection] = useState({ start: 0, end: 0 });
   const titleRef = useRef<HTMLTextAreaElement | null>(null);
-  // Snapshot the selection at right-click time, before the textarea loses focus.
-  // This is the fix for formatting tools appearing to do nothing:
-  // browsers reset selectionStart/End to 0 on blur, so by the time a menu item
-  // is clicked, reading the live DOM gives {0,0} instead of the real range.
-  const savedSelectionRef = useRef({ start: 0, end: 0 });
 
-  // Context Menu state
+  // Context Menu coordinates state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // Initialize TipTap Editor
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      Underline,
+      Highlight.configure({ multicolor: true }),
+      Link.configure({
+        openOnClick: false,
+        autolink: true,
+      }),
+      TextStyle,
+      Color,
+      Table.configure({
+        resizable: true,
+      }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      Markdown.configure({
+        html: true, // Allow HTML tags like <u> and <span>
+        linkify: true,
+      }),
+      Placeholder.configure({
+        placeholder: t("writing.placeholder"),
+      }),
+    ],
+    content: body,
+    editorProps: {
+      attributes: {
+        class: "editor",
+        id: "note-body",
+      },
+    },
+    onUpdate: ({ editor }) => {
+      // Serialize to Markdown to save
+      const md = (editor.storage as any).markdown.getMarkdown();
+      onBodyChange(md);
+
+      // Notify of cursor changes
+      const { from, to } = editor.state.selection;
+      onCursorChange(from - 1, to - 1);
+    },
+    onSelectionUpdate: ({ editor }) => {
+      const { from, to } = editor.state.selection;
+      onCursorChange(from - 1, to - 1);
+    },
+  });
+
+  // Keep editor content in sync with external updates (like switching notes)
+  useEffect(() => {
+    if (!editor) return;
+    const currentMarkdown = (editor.storage as any).markdown.getMarkdown();
+    if (body !== currentMarkdown) {
+      editor.commands.setContent(body);
+    }
+  }, [body, editor]);
+
+  // Backwards-compatible Ref Bridge:
+  // Maps standard textarea APIs (focus, selectionStart/End, setSelectionRange) to TipTap
+  useEffect(() => {
+    if (!editorRef || !editor) return;
+
+    (editorRef as any).current = {
+      focus: () => {
+        editor.commands.focus();
+      },
+      setSelectionRange: (start: number, end: number) => {
+        editor.commands.setTextSelection({ from: start + 1, to: end + 1 });
+      },
+      get selectionStart() {
+        return editor.state.selection.from - 1;
+      },
+      get selectionEnd() {
+        return editor.state.selection.to - 1;
+      },
+    };
+  }, [editor, editorRef]);
 
   // Auto-resize the title textarea to match its content height.
   useLayoutEffect(() => {
@@ -53,103 +139,50 @@ export function WritingSection({
     el.style.height = `${el.scrollHeight}px`;
   }, [title]);
 
-  // Auto-resize the body editor to match its content height.
-  useLayoutEffect(() => {
-    const el = editorRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [body]);
-
-  const selectedText = body.slice(selection.start, selection.end);
-
-  const syncSelection = (textarea: HTMLTextAreaElement) => {
-    const nextSelection = {
-      start: textarea.selectionStart,
-      end: textarea.selectionEnd,
-    };
-    setSelection(nextSelection);
-    onCursorChange(nextSelection.start, nextSelection.end);
+  const getSelectedText = () => {
+    if (!editor) return "";
+    const { from, to } = editor.state.selection;
+    return editor.state.doc.textBetween(from, to);
   };
 
   const focusEditorFromPanel = (event: MouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement;
-    if (target.closest("button, input, textarea, .editor-context-menu")) {
+    if (target.closest("button, input, textarea, .editor-context-menu, .tiptap")) {
       return;
     }
-
-    editorRef.current?.focus();
+    editor?.commands.focus();
   };
 
   const handleTitleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      editorRef.current?.focus();
-      editorRef.current?.setSelectionRange(0, 0);
+      editor?.commands.focus();
     }
   };
 
-  // Helper to extract paragraph surrounding the cursor when nothing is selected
-  const getParagraphAtCursor = (val: string, cursor: number) => {
-    if (!val) return "";
-    const before = val.slice(0, cursor);
-    const after = val.slice(cursor);
-    const startIdx = before.lastIndexOf("\n\n") !== -1 ? before.lastIndexOf("\n\n") + 2 : 0;
-    const endIdx = after.indexOf("\n\n") !== -1 ? cursor + after.indexOf("\n\n") : val.length;
-    return val.slice(startIdx, endIdx).trim();
+  const handleContextMenu = (e: MouseEvent) => {
+    e.preventDefault();
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+    });
   };
 
   const handleContextMenuAction = async (actionId: string, payload?: any) => {
-    const textarea = editorRef.current;
-    if (!textarea) return;
+    if (!editor) return;
 
-    // Use the selection that was active when the menu opened, NOT the live DOM
-    // value (which browsers reset to 0 when the textarea loses focus).
-    const start = savedSelectionRef.current.start;
-    const end = savedSelectionRef.current.end;
-    const selText = body.slice(start, end);
-
-    const applyReplacement = (
-      replacementText: string,
-      cursorOffsetStart = 0,
-      cursorOffsetEnd = replacementText.length
-    ) => {
-      textarea.focus();
-      textarea.setSelectionRange(start, end);
-
-      let success = false;
-      try {
-        success = document.execCommand("insertText", false, replacementText);
-      } catch (e) {
-        success = false;
-      }
-
-      if (!success) {
-        const nextBody = `${body.slice(0, start)}${replacementText}${body.slice(end)}`;
-        onBodyChange(nextBody);
-      }
-
-      const nextStart = start + cursorOffsetStart;
-      const nextEnd = start + cursorOffsetEnd;
-
-      setSelection({ start: nextStart, end: nextEnd });
-      onCursorChange(nextStart, nextEnd);
-
-      window.requestAnimationFrame(() => {
-        textarea.focus();
-        textarea.setSelectionRange(nextStart, nextEnd);
-      });
-    };
+    const { from, to } = editor.state.selection;
+    const selText = editor.state.doc.textBetween(from, to);
 
     switch (actionId) {
       case "cut":
-        if (start !== end) {
+        if (from !== to) {
           void navigator.clipboard?.writeText(selText);
-          applyReplacement("");
+          editor.commands.deleteSelection();
         }
         break;
       case "copy":
-        if (start !== end) {
+        if (from !== to) {
           void navigator.clipboard?.writeText(selText);
         }
         break;
@@ -157,7 +190,7 @@ export function WritingSection({
         try {
           const text = await navigator.clipboard?.readText();
           if (text) {
-            applyReplacement(text);
+            editor.commands.insertContent(text);
           }
         } catch {
           // Clipboard fallback
@@ -168,85 +201,74 @@ export function WritingSection({
           const text = await navigator.clipboard?.readText();
           if (text) {
             const plain = text.replace(/<[^>]*>/g, ""); // strip HTML tags
-            applyReplacement(plain);
+            editor.commands.insertContent(plain);
           }
         } catch {
           // Clipboard fallback
         }
         break;
       case "selectAll":
-        textarea.focus();
-        textarea.setSelectionRange(0, body.length);
-        setSelection({ start: 0, end: body.length });
-        onCursorChange(0, body.length);
+        editor.commands.selectAll();
         break;
       case "bold":
-        applyReplacement(`**${selText}**`, 2, 2 + selText.length);
+        editor.chain().focus().toggleBold().run();
         break;
       case "italic":
-        applyReplacement(`_${selText}_`, 1, 1 + selText.length);
+        editor.chain().focus().toggleItalic().run();
         break;
       case "underline":
-        applyReplacement(`<u>${selText}</u>`, 3, 3 + selText.length);
+        editor.chain().focus().toggleUnderline().run();
         break;
       case "strikethrough":
-        applyReplacement(`~~${selText}~~`, 2, 2 + selText.length);
+        editor.chain().focus().toggleStrike().run();
         break;
       case "highlight":
-        applyReplacement(`==${selText}==`, 2, 2 + selText.length);
+        editor.chain().focus().toggleHighlight().run();
         break;
       case "clearFormat":
-        if (start !== end) {
-          const cleared = selText
-            .replace(/\*\*(.*?)\*\*/g, "$1")
-            .replace(/_(.*?)_/g, "$1")
-            .replace(/<u>(.*?)<\/u>/g, "$1")
-            .replace(/~~(.*?)~~/g, "$1")
-            .replace(/==(.*?)==/g, "$1")
-            .replace(/<mark>(.*?)<\/mark>/g, "$1")
-            .replace(/<span style="[^"]*">(.*?)<\/span>/g, "$1");
-          applyReplacement(cleared);
-        }
+        editor.chain().focus().unsetAllMarks().clearNodes().run();
         break;
       case "h1":
-        applyReplacement(`# ${selText}`, 2, 2 + selText.length);
+        editor.chain().focus().toggleHeading({ level: 1 }).run();
         break;
       case "h2":
-        applyReplacement(`## ${selText}`, 3, 3 + selText.length);
+        editor.chain().focus().toggleHeading({ level: 2 }).run();
         break;
       case "h3":
-        applyReplacement(`### ${selText}`, 4, 4 + selText.length);
+        editor.chain().focus().toggleHeading({ level: 3 }).run();
         break;
       case "textColor":
         if (payload) {
-          const tagOpen = `<span style="color: ${payload}">`;
-          applyReplacement(`${tagOpen}${selText}</span>`, tagOpen.length, tagOpen.length + selText.length);
+          editor.chain().focus().setColor(payload).run();
+        } else {
+          editor.chain().focus().unsetColor().run();
         }
         break;
       case "bgColor":
         if (payload) {
-          const tagOpen = `<span style="background-color: ${payload}">`;
-          applyReplacement(`${tagOpen}${selText}</span>`, tagOpen.length, tagOpen.length + selText.length);
+          editor.chain().focus().toggleHighlight({ color: payload }).run();
+        } else {
+          editor.chain().focus().unsetHighlight().run();
         }
         break;
       case "insertTable":
-        applyReplacement("\n| Column 1 | Column 2 |\n| -------- | -------- |\n| Cell 1   | Cell 2   |\n");
+        editor.chain().focus().insertTable({ rows: 3, cols: 2, withHeaderRow: true }).run();
         break;
       case "insertCallout":
-        applyReplacement("\n> [!NOTE]\n> Callout content\n");
+        editor.chain().focus().toggleBlockquote().run();
         break;
       case "insertDivider":
-        applyReplacement("\n---\n");
+        editor.chain().focus().setHorizontalRule().run();
         break;
       case "insertCode":
-        applyReplacement("\n```javascript\n\n```\n", 15, 15);
+        editor.chain().focus().toggleCodeBlock().run();
         break;
       case "insertMath":
-        applyReplacement("\n$$\n\n$$\n", 4, 4);
+        editor.chain().focus().insertContent("\n$$\ne = mc^2\n$$\n").run();
         break;
       case "insertLinkedNote":
         if (payload) {
-          applyReplacement(`[${payload.title || payload.cardTitle}](/notes/${payload.id})`);
+          editor.chain().focus().insertContent(`[${payload.title || payload.cardTitle}](/notes/${payload.id})`).run();
         }
         break;
       case "searchSelected":
@@ -261,7 +283,14 @@ export function WritingSection({
       case "aiTranslate":
       case "aiContinue":
         if (onAskAI) {
-          const contextText = selText.trim() || getParagraphAtCursor(body, start) || body.trim();
+          let contextText = selText.trim();
+          if (!contextText) {
+            // Grab current paragraph/block
+            contextText = editor.state.selection.$from.parent.textContent.trim();
+          }
+          if (!contextText) {
+            contextText = editor.getText();
+          }
           let aiPrompt = "";
           if (actionId === "aiExplain") {
             aiPrompt = `Explain this context from my note: "${contextText}"`;
@@ -287,7 +316,7 @@ export function WritingSection({
   return (
     <section className="writing-panel" aria-label="Writing section">
       <div className="writing-document-scroll" onMouseDown={focusEditorFromPanel}>
-        <article className="writing-document" aria-label="Knowledge document">
+        <article className="writing-document" aria-label="Knowledge document" onContextMenu={handleContextMenu}>
           <textarea
             ref={titleRef}
             id="note-title"
@@ -302,59 +331,7 @@ export function WritingSection({
           />
 
           <div className="editor-wrap">
-
-            <textarea
-              id="note-body"
-              className="editor"
-              ref={editorRef}
-              value={body}
-              onChange={(event) => {
-                onBodyChange(event.target.value);
-                syncSelection(event.target);
-              }}
-              onClick={(event) => syncSelection(event.currentTarget)}
-              onKeyUp={(event) => syncSelection(event.currentTarget)}
-              onSelect={(event) => syncSelection(event.currentTarget)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                // Snapshot selection NOW while the textarea still has focus.
-                // After the menu mounts the textarea loses focus and the browser
-                // zeros selectionStart/End — which is the root cause of formatting
-                // tools appearing in the UI but doing nothing.
-                const ta = e.currentTarget;
-                savedSelectionRef.current = {
-                  start: ta.selectionStart,
-                  end: ta.selectionEnd,
-                };
-                setContextMenu({
-                  x: e.clientX,
-                  y: e.clientY,
-                });
-              }}
-              onPaste={(event) => {
-                const clipboardValue = event.clipboardData.getData("text/plain");
-                if (!clipboardValue) {
-                  return;
-                }
-
-                event.preventDefault();
-                const cleaned = cleanPastedText(clipboardValue);
-                const textarea = event.currentTarget;
-                const selectionStart = textarea.selectionStart;
-                const selectionEnd = textarea.selectionEnd;
-                const nextBody = `${body.slice(0, selectionStart)}${cleaned}${body.slice(selectionEnd)}`;
-                const nextCursor = selectionStart + cleaned.length;
-                onBodyChange(nextBody);
-                setSelection({ start: nextCursor, end: nextCursor });
-                onCursorChange(nextCursor, nextCursor);
-
-                window.requestAnimationFrame(() => {
-                  textarea.focus();
-                  textarea.setSelectionRange(nextCursor, nextCursor);
-                });
-              }}
-              placeholder={t("writing.placeholder")}
-            />
+            <EditorContent editor={editor} />
           </div>
         </article>
       </div>
@@ -381,7 +358,7 @@ export function WritingSection({
         <EditorContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          selectedText={selectedText}
+          selectedText={getSelectedText()}
           notes={notes}
           onClose={() => setContextMenu(null)}
           onAction={handleContextMenuAction}
