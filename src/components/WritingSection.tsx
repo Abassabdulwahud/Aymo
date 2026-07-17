@@ -36,6 +36,11 @@ export function WritingSection({
   const { t } = useI18n();
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const titleRef = useRef<HTMLTextAreaElement | null>(null);
+  // Snapshot the selection at right-click time, before the textarea loses focus.
+  // This is the fix for formatting tools appearing to do nothing:
+  // browsers reset selectionStart/End to 0 on blur, so by the time a menu item
+  // is clicked, reading the live DOM gives {0,0} instead of the real range.
+  const savedSelectionRef = useRef({ start: 0, end: 0 });
 
   // Context Menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -98,8 +103,10 @@ export function WritingSection({
     const textarea = editorRef.current;
     if (!textarea) return;
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
+    // Use the selection that was active when the menu opened, NOT the live DOM
+    // value (which browsers reset to 0 when the textarea loses focus).
+    const start = savedSelectionRef.current.start;
+    const end = savedSelectionRef.current.end;
     const selText = body.slice(start, end);
 
     const applyWrapping = (before: string, after: string = before) => {
@@ -330,6 +337,15 @@ export function WritingSection({
               onSelect={(event) => syncSelection(event.currentTarget)}
               onContextMenu={(e) => {
                 e.preventDefault();
+                // Snapshot selection NOW while the textarea still has focus.
+                // After the menu mounts the textarea loses focus and the browser
+                // zeros selectionStart/End — which is the root cause of formatting
+                // tools appearing in the UI but doing nothing.
+                const ta = e.currentTarget;
+                savedSelectionRef.current = {
+                  start: ta.selectionStart,
+                  end: ta.selectionEnd,
+                };
                 setContextMenu({
                   x: e.clientX,
                   y: e.clientY,
