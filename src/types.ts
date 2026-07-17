@@ -43,3 +43,41 @@ export interface ChatMessage {
   content: string;
   status?: "thinking" | "streaming" | "done" | "error";
 }
+
+// ─── Universal Annotation System ─────────────────────────────────────────────
+
+export type AnnotationSourceType = "pdf" | "note" | "ai" | "web";
+
+export type AnnotationType =
+  | "highlight"
+  | "underline"
+  | "strikethrough"
+  | "comment"
+  | "bookmark";
+
+/** Relative bounding box within a rendered page (values are in pixels relative
+ *  to the top-left of the page container at the time of capture). */
+export interface BoundingRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface Annotation {
+  id: number;
+  user_id: number;
+  source_type: AnnotationSourceType;
+  source_id: number;
+  page_number: number | null;
+  selected_text: string;
+  bounding_rects: BoundingRect[] | null;
+  start_offset: number | null;
+  end_offset: number | null;
+  color: string;
+  annotation_type: AnnotationType;
+  comment: string | null;
+  linked_note_id: number | null;
+  created_at: string;
+  updated_at: string;
+}

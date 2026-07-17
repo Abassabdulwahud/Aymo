@@ -22,7 +22,32 @@ interface NoteSidePanelProps {
   onFileUpload: (files: FileList | null) => void;
   onAddLink: () => void;
   onRemoveUpload: (id: number) => Promise<void> | void;
+  // Annotation system additions
+  selectedNoteId: number;
+  annotations: Annotation[];
+  flashAnnotationId: number | null;
+  jumpToPage: number | null;
+  onAnnotationCreate: (
+    pageIndex: number,
+    selectedText: string,
+    rects: BoundingRect[],
+    action: SelectionMenuAction,
+  ) => void;
+  onJumpToPage: (pageIndex: number | null) => void;
+  onFlash: (id: number | null) => void;
+  onDeleteAnnotation: (id: number) => void;
+  onUpdateAnnotationComment: (id: number, comment: string) => void;
+  onCreateNoteFromAnnotation: (text: string, pageNumber: number) => void;
+  onAppendNoteFromAnnotation: (text: string, pageNumber: number) => void;
+  onAskAI: (prompt: string) => void;
+  onCopyText: (text: string, withCitation?: boolean, pageNumber?: number) => void;
+  onSearchGoogle: (text: string) => void;
 }
+
+import { SelectionMenuAction } from "./SelectionContextMenu";
+import { Annotation, BoundingRect } from "../types";
+import { AnnotationsPanel } from "./AnnotationsPanel";
+
 
 function detectViewerKind(upload: UploadedItem): "image" | "pdf" | "document" | "video" | "audio" | "link" {
   const source = `${upload.source ?? ""} ${upload.name}`.toLowerCase();
@@ -55,6 +80,20 @@ export function NoteSidePanel({
   onFileUpload,
   onAddLink,
   onRemoveUpload,
+  selectedNoteId,
+  annotations,
+  flashAnnotationId,
+  jumpToPage,
+  onAnnotationCreate,
+  onJumpToPage,
+  onFlash,
+  onDeleteAnnotation,
+  onUpdateAnnotationComment,
+  onCreateNoteFromAnnotation,
+  onAppendNoteFromAnnotation,
+  onAskAI,
+  onCopyText,
+  onSearchGoogle,
 }: NoteSidePanelProps) {
   const { t } = useI18n();
   const [selectedUploadId, setSelectedUploadId] = useState<number | null>(uploads[0]?.id ?? null);
@@ -62,6 +101,7 @@ export function NoteSidePanel({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({});
+  const [showAnnotationsPanel, setShowAnnotationsPanel] = useState(false);
 
   const toggleStepsExpanded = (id: number) => {
     setExpandedSteps((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -233,6 +273,18 @@ export function NoteSidePanel({
         <div className="file-viewer-head" style={{ padding: "0 2px" }}>
           {/* Persistent Action Bar: collapse toggle and delete button */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, paddingBottom: 4 }}>
+            {viewerKind === "pdf" && (
+              <button
+                className={`icon-only-button${showAnnotationsPanel ? " active" : ""}`}
+                type="button"
+                onClick={() => setShowAnnotationsPanel((prev) => !prev)}
+                aria-label="Toggle annotations panel"
+                title="Toggle annotations panel"
+                style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <span>📌</span>
+              </button>
+            )}
             <button
               className="icon-only-button"
               type="button"
@@ -300,8 +352,34 @@ export function NoteSidePanel({
             </div>
           ) : null}
           {viewerKind === "pdf" && previewUrl ? (
-            <div className="pdf-viewer-stage">
-              <PdfCanvasViewer source={previewUrl} />
+            <div className="pdf-viewer-stage-container" style={{ display: "flex", width: "100%", height: "100%", position: "relative" }}>
+              <div className="pdf-viewer-stage" style={{ flexGrow: 1, minWidth: 0 }}>
+                <PdfCanvasViewer
+                  source={previewUrl}
+                  sourceId={selectedUpload.id}
+                  annotations={annotations.filter((a) => a.source_id === selectedUpload.id)}
+                  flashAnnotationId={flashAnnotationId}
+                  jumpToPage={jumpToPage}
+                  onAnnotationCreate={onAnnotationCreate}
+                  onAskAI={onAskAI}
+                  onCopyText={onCopyText}
+                  onSearchGoogle={onSearchGoogle}
+                  onCreateNote={onCreateNoteFromAnnotation}
+                  onAppendToNote={onAppendNoteFromAnnotation}
+                />
+              </div>
+              {showAnnotationsPanel && (
+                <AnnotationsPanel
+                  annotations={annotations.filter((a) => a.source_id === selectedUpload.id)}
+                  onJumpToPage={(pIndex) => onJumpToPage(pIndex)}
+                  onFlash={(id) => onFlash(id)}
+                  onDelete={onDeleteAnnotation}
+                  onUpdateComment={onUpdateAnnotationComment}
+                  onCreateNote={(a) => onCreateNoteFromAnnotation(a.selected_text, (a.page_number ?? 0) + 1)}
+                  onAppendToNote={(a) => onAppendNoteFromAnnotation(a.selected_text, (a.page_number ?? 0) + 1)}
+                  onClose={() => setShowAnnotationsPanel(false)}
+                />
+              )}
             </div>
           ) : null}
           {viewerKind === "document" ? (

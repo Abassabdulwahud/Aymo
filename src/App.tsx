@@ -46,6 +46,9 @@ import { listTags } from "./services/tagsService";
 import { chatWithAIHttp, listAIResponses, streamAIChat } from "./services/aiService";
 import { queueLinkScrape, queuePdfExtraction, syncNoteContent } from "./services/contentService";
 import { loadNoteRightPanelLayout, saveNoteRightPanelLayout } from "./services/noteLayoutStorage";
+import * as annotationsService from "./services/annotationsService";
+import { Annotation, BoundingRect } from "./types";
+import { SelectionMenuAction } from "./components/SelectionContextMenu";
 
 interface HomeNote {
   id: number;
@@ -308,6 +311,12 @@ export default function App() {
   const [homeError, setHomeError] = useState<string | null>(null);
   const [openNoteMenuId, setOpenNoteMenuId] = useState<number | null>(null);
   const [chatMessagesByNote, setChatMessagesByNote] = useState<Record<number, ChatMessage[]>>({});
+  
+  // Annotation system state
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [flashAnnotationId, setFlashAnnotationId] = useState<number | null>(null);
+  const [jumpToPage, setJumpToPage] = useState<number | null>(null);
+
   const speechRecognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const transcriptBufferRef = useRef("");
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
@@ -698,6 +707,142 @@ export default function App() {
       cancelled = true;
     };
   }, [authToken, selectedNote, chatMessagesByNote]);
+
+  // Fetch annotations when active note or its files change
+  useEffect(() => {
+    if (!authToken || !selectedNote) return;
+
+    let active = true;
+    const fetchAllAnnotations = async () => {
+      try {
+        const list: Annotation[] = [];
+        for (const file of selectedNote.uploads) {
+          if (file.kind === "pdf") {
+            const fileAnns = await annotationsService.listAnnotations(authToken, "pdf", file.id);
+            list.push(...fileAnns);
+          }
+        }
+        if (active) {
+          setAnnotations(list);
+        }
+      } catch (e) {
+        console.error("Failed to load annotations", e);
+      }
+    };
+
+    void fetchAllAnnotations();
+    return () => {
+      active = false;
+    };
+  }, [authToken, selectedNote?.uploads, selectedNote?.id]);
+
+  // Annotation system handlers
+  const handleAnnotationCreate = async (
+    pageIndex: number,
+    selectedText: string,
+    rects: BoundingRect[],
+    action: SelectionMenuAction,
+  ) => {
+    if (!authToken || !selectedNote) return;
+
+    // Determine color and type from context menu action
+    let color = "#FFD60A";
+    let type: Annotation["annotation_type"] = "highlight";
+
+    if (action.startsWith("color-")) {
+      const colorVal = action.replace("color-", "");
+      if (colorVal === "green") color = "#4ADE80";
+      else if (colorVal === "blue") color = "#60A5FA";
+      else if (colorVal === "pink") color = "#F472B6";
+    }
+
+    if (action === "annotate-underline") type = "underline";
+    else if (action === "annotate-strikethrough") type = "strikethrough";
+    else if (action === "annotate-comment") type = "comment";
+    else if (action === "annotate-bookmark") type = "bookmark";
+
+    // Find current active PDF upload ID
+    const activePdf = selectedNote.uploads.find((u) => u.kind === "pdf");
+    if (!activePdf) return;
+
+    try {
+      const newAnn = await annotationsService.createAnnotation(authToken, {
+        source_type: "pdf",
+        source_id: activePdf.id,
+        page_number: pageIndex,
+        selected_text: selectedText,
+        bounding_rects: rects,
+        color,
+        annotation_type: type,
+        comment: type === "comment" ? "New comment" : undefined,
+      });
+
+      setAnnotations((prev) => [...prev, newAnn]);
+    } catch (e) {
+      console.error("Failed to create annotation", e);
+    }
+  };
+
+  const handleDeleteAnnotation = async (id: number) => {
+    if (!authToken) return;
+    try {
+      await annotationsService.deleteAnnotation(authToken, id);
+      setAnnotations((prev) => prev.filter((a) => a.id !== id));
+    } catch (e) {
+      console.error("Failed to delete annotation", e);
+    }
+  };
+
+  const handleUpdateAnnotationComment = async (id: number, comment: string) => {
+    if (!authToken) return;
+    try {
+      const updated = await annotationsService.updateAnnotation(authToken, id, { comment });
+      setAnnotations((prev) => prev.map((a) => (a.id === id ? updated : a)));
+    } catch (e) {
+      console.error("Failed to update annotation comment", e);
+    }
+  };
+
+  const handleCreateNoteFromAnnotation = async (text: string, pageNumber: number) => {
+    if (!authToken) return;
+    try {
+      const created = mapNoteToHomeNote(await createNote(authToken), noteLabels);
+      const updated = await updateNote(authToken, created.id, {
+        title: `Highlight from PDF Page ${pageNumber}`,
+        body: text,
+      });
+      const mapped = mapNoteToHomeNote(updated, noteLabels);
+      lastSyncedRef.current[mapped.id] = {
+        title: mapped.title,
+        body: mapped.body,
+      };
+      setNotes((prev) => [mapped, ...prev]);
+      setSelectedId(mapped.id);
+      navigate(`/notes/${mapped.id}`);
+    } catch (e) {
+      console.error("Failed to create note from highlight", e);
+    }
+  };
+
+  const handleAppendNoteFromAnnotation = async (text: string, pageNumber: number) => {
+    if (!authToken || !selectedNote) return;
+    try {
+      const newBody = `${selectedNote.body}\n\n> ${text} (Page ${pageNumber})`;
+      const updated = await updateNote(authToken, selectedNote.id, {
+        body: newBody,
+      });
+      replaceNote(mapNoteToHomeNote(updated, noteLabels));
+    } catch (e) {
+      console.error("Failed to append highlight to note", e);
+    }
+  };
+
+  const handleFlashAnnotation = (id: number | null) => {
+    setFlashAnnotationId(id);
+    if (id !== null) {
+      setTimeout(() => setFlashAnnotationId(null), 1500);
+    }
+  };
 
   useEffect(() => {
     if (!authToken || !selectedNote) {
@@ -1479,6 +1624,21 @@ export default function App() {
                   onFileUpload={(files) => void handleUpload(files)}
                   onAddLink={() => void handleAddLink()}
                   onRemoveUpload={(id) => void handleRemoveUpload(id)}
+                  // Annotation system wire-up
+                  selectedNoteId={selectedNote.id}
+                  annotations={annotations}
+                  flashAnnotationId={flashAnnotationId}
+                  jumpToPage={jumpToPage}
+                  onAnnotationCreate={handleAnnotationCreate}
+                  onJumpToPage={setJumpToPage}
+                  onFlash={handleFlashAnnotation}
+                  onDeleteAnnotation={handleDeleteAnnotation}
+                  onUpdateAnnotationComment={handleUpdateAnnotationComment}
+                  onCreateNoteFromAnnotation={handleCreateNoteFromAnnotation}
+                  onAppendNoteFromAnnotation={handleAppendNoteFromAnnotation}
+                  onAskAI={handleAssistantPrompt}
+                  onCopyText={(text, citation) => console.log("Copied", text, citation)}
+                  onSearchGoogle={(text) => console.log("Searching Google", text)}
                 />
               </div>
             </aside>
