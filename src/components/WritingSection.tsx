@@ -109,21 +109,35 @@ export function WritingSection({
     const end = savedSelectionRef.current.end;
     const selText = body.slice(start, end);
 
-    const applyWrapping = (before: string, after: string = before) => {
-      const nextBody = `${body.slice(0, start)}${before}${selText}${after}${body.slice(end)}`;
-      onBodyChange(nextBody);
-      const nextStart = start + before.length;
-      const nextEnd = nextStart + selText.length;
+    const applyReplacement = (
+      replacementText: string,
+      cursorOffsetStart = 0,
+      cursorOffsetEnd = replacementText.length
+    ) => {
+      textarea.focus();
+      textarea.setSelectionRange(start, end);
+
+      let success = false;
+      try {
+        success = document.execCommand("insertText", false, replacementText);
+      } catch (e) {
+        success = false;
+      }
+
+      if (!success) {
+        const nextBody = `${body.slice(0, start)}${replacementText}${body.slice(end)}`;
+        onBodyChange(nextBody);
+      }
+
+      const nextStart = start + cursorOffsetStart;
+      const nextEnd = start + cursorOffsetEnd;
+
       setSelection({ start: nextStart, end: nextEnd });
       onCursorChange(nextStart, nextEnd);
+
       window.requestAnimationFrame(() => {
         textarea.focus();
-        if (start === end) {
-          // Future typing: place cursor in between markers
-          textarea.setSelectionRange(nextStart, nextStart);
-        } else {
-          textarea.setSelectionRange(nextStart, nextEnd);
-        }
+        textarea.setSelectionRange(nextStart, nextEnd);
       });
     };
 
@@ -131,14 +145,7 @@ export function WritingSection({
       case "cut":
         if (start !== end) {
           void navigator.clipboard?.writeText(selText);
-          const nextBody = `${body.slice(0, start)}${body.slice(end)}`;
-          onBodyChange(nextBody);
-          setSelection({ start, end: start });
-          onCursorChange(start, start);
-          window.requestAnimationFrame(() => {
-            textarea.focus();
-            textarea.setSelectionRange(start, start);
-          });
+          applyReplacement("");
         }
         break;
       case "copy":
@@ -150,18 +157,10 @@ export function WritingSection({
         try {
           const text = await navigator.clipboard?.readText();
           if (text) {
-            const nextBody = `${body.slice(0, start)}${text}${body.slice(end)}`;
-            onBodyChange(nextBody);
-            const nextCursor = start + text.length;
-            setSelection({ start: nextCursor, end: nextCursor });
-            onCursorChange(nextCursor, nextCursor);
-            window.requestAnimationFrame(() => {
-              textarea.focus();
-              textarea.setSelectionRange(nextCursor, nextCursor);
-            });
+            applyReplacement(text);
           }
         } catch {
-          // Clipboard API block fallback
+          // Clipboard fallback
         }
         break;
       case "pastePlain":
@@ -169,15 +168,7 @@ export function WritingSection({
           const text = await navigator.clipboard?.readText();
           if (text) {
             const plain = text.replace(/<[^>]*>/g, ""); // strip HTML tags
-            const nextBody = `${body.slice(0, start)}${plain}${body.slice(end)}`;
-            onBodyChange(nextBody);
-            const nextCursor = start + plain.length;
-            setSelection({ start: nextCursor, end: nextCursor });
-            onCursorChange(nextCursor, nextCursor);
-            window.requestAnimationFrame(() => {
-              textarea.focus();
-              textarea.setSelectionRange(nextCursor, nextCursor);
-            });
+            applyReplacement(plain);
           }
         } catch {
           // Clipboard fallback
@@ -190,19 +181,19 @@ export function WritingSection({
         onCursorChange(0, body.length);
         break;
       case "bold":
-        applyWrapping("**");
+        applyReplacement(`**${selText}**`, 2, 2 + selText.length);
         break;
       case "italic":
-        applyWrapping("_");
+        applyReplacement(`_${selText}_`, 1, 1 + selText.length);
         break;
       case "underline":
-        applyWrapping("<u>", "</u>");
+        applyReplacement(`<u>${selText}</u>`, 3, 3 + selText.length);
         break;
       case "strikethrough":
-        applyWrapping("~~");
+        applyReplacement(`~~${selText}~~`, 2, 2 + selText.length);
         break;
       case "highlight":
-        applyWrapping("==");
+        applyReplacement(`==${selText}==`, 2, 2 + selText.length);
         break;
       case "clearFormat":
         if (start !== end) {
@@ -214,59 +205,48 @@ export function WritingSection({
             .replace(/==(.*?)==/g, "$1")
             .replace(/<mark>(.*?)<\/mark>/g, "$1")
             .replace(/<span style="[^"]*">(.*?)<\/span>/g, "$1");
-          const nextBody = `${body.slice(0, start)}${cleared}${body.slice(end)}`;
-          onBodyChange(nextBody);
-          const nextEnd = start + cleared.length;
-          setSelection({ start, end: nextEnd });
-          onCursorChange(start, nextEnd);
-          window.requestAnimationFrame(() => {
-            textarea.focus();
-            textarea.setSelectionRange(start, nextEnd);
-          });
+          applyReplacement(cleared);
         }
         break;
       case "h1":
-        applyWrapping("# ", "");
+        applyReplacement(`# ${selText}`, 2, 2 + selText.length);
         break;
       case "h2":
-        applyWrapping("## ", "");
+        applyReplacement(`## ${selText}`, 3, 3 + selText.length);
         break;
       case "h3":
-        applyWrapping("### ", "");
+        applyReplacement(`### ${selText}`, 4, 4 + selText.length);
         break;
       case "textColor":
         if (payload) {
-          applyWrapping(`<span style="color: ${payload}">`, "</span>");
-        } else {
-          // Reset default text color by stripping color span if selection matches
-          applyWrapping("", "");
+          const tagOpen = `<span style="color: ${payload}">`;
+          applyReplacement(`${tagOpen}${selText}</span>`, tagOpen.length, tagOpen.length + selText.length);
         }
         break;
       case "bgColor":
         if (payload) {
-          applyWrapping(`<span style="background-color: ${payload}">`, "</span>");
-        } else {
-          applyWrapping("", "");
+          const tagOpen = `<span style="background-color: ${payload}">`;
+          applyReplacement(`${tagOpen}${selText}</span>`, tagOpen.length, tagOpen.length + selText.length);
         }
         break;
       case "insertTable":
-        applyWrapping("\n| Column 1 | Column 2 |\n| -------- | -------- |\n| Cell 1   | Cell 2   |\n");
+        applyReplacement("\n| Column 1 | Column 2 |\n| -------- | -------- |\n| Cell 1   | Cell 2   |\n");
         break;
       case "insertCallout":
-        applyWrapping("\n> [!NOTE]\n> Callout content\n");
+        applyReplacement("\n> [!NOTE]\n> Callout content\n");
         break;
       case "insertDivider":
-        applyWrapping("\n---\n");
+        applyReplacement("\n---\n");
         break;
       case "insertCode":
-        applyWrapping("\n```javascript\n", "\n```\n");
+        applyReplacement("\n```javascript\n\n```\n", 15, 15);
         break;
       case "insertMath":
-        applyWrapping("\n$$\n", "\n$$\n");
+        applyReplacement("\n$$\n\n$$\n", 4, 4);
         break;
       case "insertLinkedNote":
         if (payload) {
-          applyWrapping(`[${payload.title || payload.cardTitle}](/notes/${payload.id})`, "");
+          applyReplacement(`[${payload.title || payload.cardTitle}](/notes/${payload.id})`);
         }
         break;
       case "searchSelected":
