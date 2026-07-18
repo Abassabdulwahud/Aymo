@@ -751,15 +751,19 @@ export default function App() {
 
     if (action.startsWith("color-")) {
       const colorVal = action.replace("color-", "");
-      if (colorVal === "green") color = "#4ADE80";
-      else if (colorVal === "blue") color = "#60A5FA";
-      else if (colorVal === "pink") color = "#F472B6";
+      if (colorVal === "green")  color = "#4ADE80";
+      else if (colorVal === "blue")   color = "#60A5FA";
+      else if (colorVal === "pink")   color = "#F472B6";
+      else if (colorVal === "orange") color = "#FB923C";
     }
 
-    if (action === "annotate-underline") type = "underline";
+    if (action === "annotate-underline")       type = "underline";
     else if (action === "annotate-strikethrough") type = "strikethrough";
-    else if (action === "annotate-comment") type = "comment";
-    else if (action === "annotate-bookmark") type = "bookmark";
+    else if (action === "annotate-squiggly")   type = "strikethrough"; // closest visual
+    else if (action === "annotate-redact")     type = "strikethrough"; // stored as strikethrough for now
+    else if (action === "annotate-comment")    type = "comment";
+    else if (action === "annotate-bookmark")   type = "bookmark";
+
 
     // Find current active PDF upload ID
     const activePdf = selectedNote.uploads.find((u) => u.kind === "pdf");

@@ -352,20 +352,72 @@ export function PdfCanvasViewer({
       const { pageIndex, rects } = selection;
 
       switch (action) {
-        // ── Annotation ──
-        case "annotate-highlight":
-        case "annotate-underline":
-        case "annotate-strikethrough":
-        case "annotate-comment":
-        case "annotate-bookmark":
+        // ── Highlight colours → create highlight annotation with specific colour ──
         case "color-yellow":
+          onAnnotationCreate(pageIndex, selectedText, rects, "color-yellow");
+          break;
         case "color-green":
+          onAnnotationCreate(pageIndex, selectedText, rects, "color-green");
+          break;
         case "color-blue":
+          onAnnotationCreate(pageIndex, selectedText, rects, "color-blue");
+          break;
         case "color-pink":
-          onAnnotationCreate(pageIndex, selectedText, rects, action);
+          onAnnotationCreate(pageIndex, selectedText, rects, "color-pink");
+          break;
+        case "color-orange":
+          onAnnotationCreate(pageIndex, selectedText, rects, "color-orange");
+          break;
+
+        // ── Format / annotation type actions ──
+        case "annotate-highlight":
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-highlight");
+          break;
+        case "annotate-underline":
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-underline");
+          break;
+        case "annotate-strikethrough":
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-strikethrough");
+          break;
+        case "annotate-squiggly":
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-squiggly");
+          break;
+        case "annotate-redact":
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-redact");
+          break;
+        case "annotate-comment":
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-comment");
+          break;
+        case "annotate-bookmark":
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-bookmark");
+          break;
+
+        // ── Remove actions (UI only for now — persist via separate delete call) ──
+        case "remove-highlight":
+        case "remove-annotation":
+          // Handled by caller if needed; emit for extensibility
+          break;
+
+        // ── Insert shapes / sticky notes ──
+        case "insert-comment":
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-comment");
+          break;
+        case "insert-sticky-note":
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-comment");
+          break;
+        // Shape insert actions are fire-and-forget for now
+        case "insert-textbox":
+        case "insert-arrow":
+        case "insert-rectangle":
+        case "insert-circle":
+        case "insert-line":
+        case "insert-freehand":
+        case "insert-stamp":
+          // Future: open shape drawing overlay
           break;
 
         // ── Clipboard ──
+        case "cut":
         case "copy":
           void navigator.clipboard.writeText(selectedText);
           onCopyText(selectedText);
@@ -375,9 +427,27 @@ export function PdfCanvasViewer({
           onCopyText(selectedText, true, pageIndex + 1);
           break;
 
+        // ── Select all (forward to browser) ──
+        case "select-all":
+          document.execCommand("selectAll");
+          break;
+
+        // ── Search ──
+        case "search-selected":
+        case "search-google":
+          window.open(`https://www.google.com/search?q=${encodeURIComponent(selectedText)}`, "_blank");
+          onSearchGoogle(selectedText);
+          break;
+        case "search-aymo":
+          onAskAI(`Search AYMO knowledge base for: "${selectedText}"`);
+          break;
+        case "search-document":
+          onAskAI(`Find all references to "${selectedText}" in this document.`);
+          break;
+
         // ── AI ──
         case "ai-explain":
-          onAskAI(`Explain the following text: "${selectedText}"`);
+          onAskAI(`Explain the following text from the PDF: "${selectedText}"`);
           break;
         case "ai-summarize":
           onAskAI(`Summarize: "${selectedText}"`);
@@ -397,6 +467,15 @@ export function PdfCanvasViewer({
         case "ai-continue":
           onAskAI(`Continue from: "${selectedText}"`);
           break;
+        case "ai-custom":
+          // Prompt the user to type a custom question
+          {
+            const question = window.prompt(`Ask AI about: "${selectedText.slice(0, 80)}…"\n\nYour question:`);
+            if (question?.trim()) {
+              onAskAI(`${question.trim()}\n\nContext: "${selectedText}"`);
+            }
+          }
+          break;
 
         // ── Knowledge ──
         case "km-create-note":
@@ -406,24 +485,13 @@ export function PdfCanvasViewer({
           onAppendToNote(selectedText, pageIndex + 1);
           break;
 
-        // ── Search ──
-        case "search-google":
-          window.open(`https://www.google.com/search?q=${encodeURIComponent(selectedText)}`, "_blank");
-          onSearchGoogle(selectedText);
-          break;
-        case "search-aymo":
-          onAskAI(`Search AYMO knowledge base for: "${selectedText}"`);
-          break;
-        case "search-document":
-          onAskAI(`Find all references to "${selectedText}" in this document.`);
-          break;
-
         default:
           break;
       }
     },
     [selection, onAnnotationCreate, onAskAI, onCopyText, onCreateNote, onAppendToNote, onSearchGoogle],
   );
+
 
   const handleBottomScrollbarScroll = () => {
     const bottomScrollbar = bottomScrollbarRef.current;

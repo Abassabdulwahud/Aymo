@@ -1,52 +1,85 @@
 /**
- * SelectionContextMenu — reusable floating action menu for text selections.
+ * SelectionContextMenu
  *
- * Supports three contexts:
- *   "pdf"  — annotation, clipboard, AI, knowledge management, search
- *   "note" — trimmed action set appropriate for the note editor
- *   "ai"   — actions on AI response text
+ * Reusable floating selection menu that shares the exact same visual design
+ * as the Note Editor context menu (EditorContextMenu).
  *
- * Viewport-safe: submenus flip left/up when they would overflow the window.
+ * It intentionally reuses:
+ *  - SmartSubmenu from EditorContextMenu (same viewport-safe positioning)
+ *  - The CSS classes .editor-context-menu / .editor-context-submenu / etc.
+ *    so that both menus are guaranteed to look identical and inherit the
+ *    same light/dark-mode tokens.
+ *
+ * Contexts:
+ *  "pdf"  — full PDF annotation menu (compact cascading structure)
+ *  "note" — trimmed set for note editor text selection
+ *  "ai"   — minimal set for AI response text
  */
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
+import { SmartSubmenu } from "./EditorContextMenu";
 
-// ── types ─────────────────────────────────────────────────────────────────────
+const MARGIN = 10; // px safety margin from viewport edges
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Action type union
+// ─────────────────────────────────────────────────────────────────────────────
 
 export type SelectionContext = "pdf" | "note" | "ai";
 
 export type SelectionMenuAction =
-  // Annotation
-  | "annotate-highlight"
-  | "annotate-underline"
-  | "annotate-strikethrough"
-  | "annotate-comment"
-  | "annotate-bookmark"
+  // Clipboard
+  | "cut"
+  | "copy"
+  | "copy-with-citation"
+  | "select-all"
+  // Highlight colours (top-level shortcut)
   | "color-yellow"
   | "color-green"
   | "color-blue"
   | "color-pink"
-  // Clipboard
-  | "copy"
-  | "copy-with-citation"
+  | "color-orange"
+  | "remove-highlight"
+  // Annotation (top-level quick buttons)
+  | "annotate-highlight"
+  | "annotate-comment"
+  | "annotate-bookmark"
+  // Format submenu
+  | "annotate-underline"
+  | "annotate-strikethrough"
+  | "annotate-squiggly"
+  | "annotate-redact"
+  | "remove-annotation"
+  // Insert submenu
+  | "insert-comment"
+  | "insert-sticky-note"
+  | "insert-textbox"
+  | "insert-arrow"
+  | "insert-rectangle"
+  | "insert-circle"
+  | "insert-line"
+  | "insert-freehand"
+  | "insert-stamp"
+  // Search
+  | "search-selected"
+  | "search-google"
+  | "search-aymo"
+  | "search-document"
   // AI
   | "ai-explain"
   | "ai-summarize"
   | "ai-rewrite"
   | "ai-simplify"
   | "ai-translate"
-  | "ai-ask"
   | "ai-continue"
+  | "ai-ask"
+  | "ai-custom"
   // Knowledge
   | "km-create-note"
   | "km-append-note"
   | "km-link-note"
   | "km-bookmark"
-  | "km-tag"
-  // Search
-  | "search-google"
-  | "search-aymo"
-  | "search-document";
+  | "km-tag";
 
 export interface SelectionContextMenuProps {
   x: number;
@@ -58,152 +91,71 @@ export interface SelectionContextMenuProps {
   onClose: () => void;
 }
 
-// ── constants ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Inner helper: a submenu trigger button (mirrors menu-item-parent pattern)
+// ─────────────────────────────────────────────────────────────────────────────
 
-const MARGIN = 10; // px safety margin from viewport edges
-const SUBMENU_WIDTH = 200;
-const MENU_WIDTH = 220;
-
-// ── SmartSubmenu ──────────────────────────────────────────────────────────────
-
-interface SubItem {
+interface SubTriggerProps {
   label: string;
-  action: SelectionMenuAction;
-  color?: string;
+  shortcut?: string;
+  children: React.ReactNode;
+  id: string;
+  activeSubmenu: string | null;
+  setActiveSubmenu: (id: string | null) => void;
 }
 
-interface SmartSubmenuProps {
-  parentRef: React.RefObject<HTMLLIElement | null>;
-  items: SubItem[];
-  onAction: (action: SelectionMenuAction) => void;
-}
-
-function SmartSubmenu({ parentRef, items, onAction }: SmartSubmenuProps) {
-  const menuRef = useRef<HTMLUListElement | null>(null);
-  const [style, setStyle] = useState<React.CSSProperties>({
-    position: "fixed",
-    opacity: 0,
-    pointerEvents: "none",
-    top: 0,
-    left: 0,
-    width: SUBMENU_WIDTH,
-  });
-
-  useEffect(() => {
-    const parent = parentRef.current;
-    const menu = menuRef.current;
-    if (!parent || !menu) return;
-
-    const parentRect = parent.getBoundingClientRect();
-    const menuHeight = menu.offsetHeight || items.length * 36;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    // Prefer right side; flip left if not enough room
-    let left = parentRect.right + 2;
-    if (left + SUBMENU_WIDTH + MARGIN > vw) {
-      left = parentRect.left - SUBMENU_WIDTH - 2;
-    }
-
-    // Prefer same top; shift up if overflows bottom
-    let top = parentRect.top;
-    if (top + menuHeight + MARGIN > vh) {
-      top = vh - menuHeight - MARGIN;
-    }
-    if (top < MARGIN) top = MARGIN;
-
-    setStyle({
-      position: "fixed",
-      top,
-      left,
-      width: SUBMENU_WIDTH,
-      opacity: 1,
-      pointerEvents: "auto",
-    });
-  }, [parentRef, items.length]);
+function SubTrigger({
+  label,
+  shortcut,
+  children,
+  id,
+  activeSubmenu,
+  setActiveSubmenu,
+}: SubTriggerProps) {
+  const triggerRef = useRef<HTMLDivElement | null>(null);
 
   return (
-    <ul ref={menuRef} className="scm-submenu" style={style} role="menu">
-      {items.map((item) => (
-        <li
-          key={item.action}
-          className="scm-item"
-          role="menuitem"
-          onClick={(e) => {
-            e.stopPropagation();
-            onAction(item.action);
-          }}
-        >
-          {item.color && (
-            <span
-              className="scm-color-chip"
-              style={{ background: item.color }}
-            />
-          )}
-          {item.label}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-// ── MenuItem with optional submenu ────────────────────────────────────────────
-
-interface MenuItemProps {
-  label: string;
-  icon?: string;
-  subItems?: SubItem[];
-  action?: SelectionMenuAction;
-  onAction: (action: SelectionMenuAction) => void;
-}
-
-function MenuItem({ label, icon, subItems, action, onAction }: MenuItemProps) {
-  const [open, setOpen] = useState(false);
-  const liRef = useRef<HTMLLIElement | null>(null);
-
-  return (
-    <li
-      ref={liRef}
-      className={`scm-item${subItems ? " scm-has-sub" : ""}`}
-      role="menuitem"
-      aria-haspopup={!!subItems}
-      aria-expanded={open}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      onClick={(e) => {
-        if (!subItems && action) {
-          e.stopPropagation();
-          onAction(action);
-        }
-      }}
+    <div
+      ref={triggerRef}
+      className="menu-item-parent"
+      onMouseEnter={() => setActiveSubmenu(id)}
+      onMouseLeave={() => setActiveSubmenu(null)}
     >
-      {icon && <span className="scm-icon">{icon}</span>}
-      <span className="scm-label">{label}</span>
-      {subItems && <span className="scm-arrow">›</span>}
-      {open && subItems && (
-        <SmartSubmenu
-          parentRef={liRef}
-          items={subItems}
-          onAction={onAction}
-        />
+      <button type="button" className="has-submenu" aria-haspopup="true">
+        {label}
+        {shortcut && <span className="shortcut-label">{shortcut}</span>}
+        <span className="submenu-arrow">▶</span>
+      </button>
+
+      {activeSubmenu === id && (
+        <SmartSubmenu parentRef={triggerRef}>{children}</SmartSubmenu>
       )}
-    </li>
+    </div>
   );
 }
 
-// ── divider ───────────────────────────────────────────────────────────────────
-
-function Divider() {
-  return <li className="scm-divider" role="separator" />;
+// Colour chip indicator
+function ColorDot({ color }: { color: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        width: 11,
+        height: 11,
+        borderRadius: "50%",
+        background: color,
+        border: "1px solid rgba(0,0,0,0.12)",
+        marginRight: 8,
+        flexShrink: 0,
+        verticalAlign: "middle",
+      }}
+    />
+  );
 }
 
-// ── group label ───────────────────────────────────────────────────────────────
-
-function GroupLabel({ label }: { label: string }) {
-  return <li className="scm-group-label">{label}</li>;
-}
-
-// ── SelectionContextMenu ──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SelectionContextMenu (root)
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function SelectionContextMenu({
   x,
@@ -214,51 +166,44 @@ export function SelectionContextMenu({
   onClose,
 }: SelectionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const [style, setStyle] = useState<React.CSSProperties>({
-    position: "fixed",
-    top: y,
-    left: x,
-    opacity: 0,
-    width: MENU_WIDTH,
-  });
+  const [coords, setCoords] = useState({ top: y, left: x });
+  const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
 
-  // Smart positioning: keep menu fully inside viewport
+  // Viewport-safe positioning (same logic as EditorContextMenu)
   useEffect(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
-    const menuHeight = menu.offsetHeight;
+    const menuEl = menuRef.current;
+    if (!menuEl) return;
+    const rect = menuEl.getBoundingClientRect();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-
-    let top = y;
     let left = x;
-    if (left + MENU_WIDTH + MARGIN > vw) left = vw - MENU_WIDTH - MARGIN;
-    if (top + menuHeight + MARGIN > vh) top = vh - menuHeight - MARGIN;
-    if (top < MARGIN) top = MARGIN;
-    if (left < MARGIN) left = MARGIN;
-
-    setStyle({ position: "fixed", top, left, opacity: 1, width: MENU_WIDTH });
+    let top = y;
+    if (x + rect.width > vw - MARGIN) left = Math.max(MARGIN, vw - rect.width - MARGIN);
+    if (y + rect.height > vh - MARGIN) top = Math.max(MARGIN, vh - rect.height - MARGIN);
+    setCoords({ top, left });
   }, [x, y]);
 
-  // Close on outside click / escape
+  // Click outside → close
   useEffect(() => {
     const handleDown = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose();
       }
     };
+    document.addEventListener("mousedown", handleDown);
+    return () => document.removeEventListener("mousedown", handleDown);
+  }, [onClose]);
+
+  // Escape → close
+  useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    document.addEventListener("mousedown", handleDown);
     document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleDown);
-      document.removeEventListener("keydown", handleKey);
-    };
+    return () => document.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
-  const handle = useCallback(
+  const fire = useCallback(
     (action: SelectionMenuAction) => {
       onAction(action, selectedText);
       onClose();
@@ -266,83 +211,241 @@ export function SelectionContextMenu({
     [onAction, onClose, selectedText],
   );
 
+  const hasSelection = selectedText.trim().length > 0;
+
   // ── PDF context ─────────────────────────────────────────────────────────────
-  const pdfItems = (
-    <>
-      <GroupLabel label="Annotation" />
-      <MenuItem
-        label="Highlight"
-        icon="🖊"
-        subItems={[
-          { label: "Yellow", action: "color-yellow", color: "#FFD60A" },
-          { label: "Green",  action: "color-green",  color: "#4ADE80" },
-          { label: "Blue",   action: "color-blue",   color: "#60A5FA" },
-          { label: "Pink",   action: "color-pink",   color: "#F472B6" },
-        ]}
-        onAction={handle}
-      />
-      <MenuItem label="Underline"     icon="U̲" action="annotate-underline"     onAction={handle} />
-      <MenuItem label="Strikethrough" icon="S̶" action="annotate-strikethrough" onAction={handle} />
-      <MenuItem label="Add Comment"   icon="💬" action="annotate-comment"       onAction={handle} />
-      <MenuItem label="Bookmark"      icon="🔖" action="annotate-bookmark"      onAction={handle} />
-      <Divider />
-      <GroupLabel label="Clipboard" />
-      <MenuItem label="Copy"               icon="⎘" action="copy"               onAction={handle} />
-      <MenuItem label="Copy with Citation" icon="📄" action="copy-with-citation" onAction={handle} />
-      <Divider />
-      <GroupLabel label="AI" />
-      <MenuItem label="Explain"    icon="💡" action="ai-explain"    onAction={handle} />
-      <MenuItem label="Summarize"  icon="📝" action="ai-summarize"  onAction={handle} />
-      <MenuItem label="Simplify"   icon="✨" action="ai-simplify"   onAction={handle} />
-      <MenuItem label="Translate"  icon="🌐" action="ai-translate"  onAction={handle} />
-      <MenuItem label="Ask AI…"    icon="🤖" action="ai-ask"        onAction={handle} />
-      <Divider />
-      <GroupLabel label="Knowledge" />
-      <MenuItem label="Create Note"         icon="📔" action="km-create-note" onAction={handle} />
-      <MenuItem label="Append to Note"      icon="➕" action="km-append-note"  onAction={handle} />
-      <Divider />
-      <GroupLabel label="Search" />
-      <MenuItem label="Search Google"        icon="🔍" action="search-google"   onAction={handle} />
-      <MenuItem label="Search in AYMO"       icon="🔎" action="search-aymo"     onAction={handle} />
-      <MenuItem label="Search in Document"   icon="📖" action="search-document" onAction={handle} />
-    </>
-  );
+  if (context === "pdf") {
+    return (
+      <div
+        ref={menuRef}
+        className="editor-context-menu"
+        style={{ position: "fixed", top: coords.top, left: coords.left, zIndex: 9999 }}
+        role="menu"
+        aria-label="PDF selection actions"
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {/* ── Clipboard ── */}
+        <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("cut")}>
+          Cut <span className="shortcut-label">Ctrl+X</span>
+        </button>
+        <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("copy")}>
+          Copy <span className="shortcut-label">Ctrl+C</span>
+        </button>
+        <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("copy-with-citation")}>
+          Copy with Citation
+        </button>
 
-  // ── Note context ────────────────────────────────────────────────────────────
-  const noteItems = (
-    <>
-      <MenuItem label="Copy"      icon="⎘" action="copy"       onAction={handle} />
-      <MenuItem label="Explain"   icon="💡" action="ai-explain"  onAction={handle} />
-      <MenuItem label="Summarize" icon="📝" action="ai-summarize" onAction={handle} />
-      <MenuItem label="Search Google" icon="🔍" action="search-google" onAction={handle} />
-    </>
-  );
+        <div className="menu-divider" />
 
-  // ── AI context ──────────────────────────────────────────────────────────────
-  const aiItems = (
-    <>
-      <MenuItem label="Copy"          icon="⎘"  action="copy"         onAction={handle} />
-      <MenuItem label="Create Note"   icon="📔" action="km-create-note" onAction={handle} />
-      <MenuItem label="Explain"       icon="💡" action="ai-explain"    onAction={handle} />
-      <MenuItem label="Simplify"      icon="✨" action="ai-simplify"   onAction={handle} />
-      <MenuItem label="Continue"      icon="➡" action="ai-continue"   onAction={handle} />
-    </>
-  );
+        {/* ── Highlight (quick colour submenu) ── */}
+        <SubTrigger
+          id="highlight"
+          label="Highlight"
+          activeSubmenu={activeSubmenu}
+          setActiveSubmenu={setActiveSubmenu}
+        >
+          <button type="button" role="menuitem" onClick={() => fire("color-yellow")}>
+            <ColorDot color="#FFD60A" /> Yellow
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("color-green")}>
+            <ColorDot color="#4ADE80" /> Green
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("color-blue")}>
+            <ColorDot color="#60A5FA" /> Blue
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("color-pink")}>
+            <ColorDot color="#F472B6" /> Pink
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("color-orange")}>
+            <ColorDot color="#FB923C" /> Orange
+          </button>
+          <div className="menu-divider" />
+          <button type="button" role="menuitem" onClick={() => fire("remove-highlight")}>
+            Remove Highlight
+          </button>
+        </SubTrigger>
 
+        {/* ── Comment & Bookmark (top-level) ── */}
+        <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("annotate-comment")}>
+          Comment
+        </button>
+        <button type="button" role="menuitem" onClick={() => fire("annotate-bookmark")}>
+          Bookmark
+        </button>
+
+        <div className="menu-divider" />
+
+        {/* ── Format submenu ── */}
+        <SubTrigger
+          id="format"
+          label="Format"
+          activeSubmenu={activeSubmenu}
+          setActiveSubmenu={setActiveSubmenu}
+        >
+          <button type="button" role="menuitem" onClick={() => fire("annotate-highlight")}>
+            Highlight
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("annotate-underline")}>
+            Underline
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("annotate-strikethrough")}>
+            Strikethrough
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("annotate-squiggly")}>
+            Squiggly
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("annotate-redact")}>
+            Redact
+          </button>
+          <div className="menu-divider" />
+          <button type="button" role="menuitem" onClick={() => fire("remove-annotation")}>
+            Remove Annotation
+          </button>
+        </SubTrigger>
+
+        {/* ── Insert submenu ── */}
+        <SubTrigger
+          id="insert"
+          label="Insert"
+          activeSubmenu={activeSubmenu}
+          setActiveSubmenu={setActiveSubmenu}
+        >
+          <button type="button" role="menuitem" onClick={() => fire("insert-comment")}>
+            Comment
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("insert-sticky-note")}>
+            Sticky Note
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("insert-textbox")}>
+            Text Box
+          </button>
+          <div className="menu-divider" />
+          <button type="button" role="menuitem" onClick={() => fire("insert-arrow")}>
+            Arrow
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("insert-rectangle")}>
+            Rectangle
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("insert-circle")}>
+            Circle
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("insert-line")}>
+            Line
+          </button>
+          <div className="menu-divider" />
+          <button type="button" role="menuitem" onClick={() => fire("insert-freehand")}>
+            Freehand Drawing
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("insert-stamp")}>
+            Stamp
+          </button>
+        </SubTrigger>
+
+        <div className="menu-divider" />
+
+        {/* ── Search ── */}
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!hasSelection}
+          onClick={() => fire("search-selected")}
+        >
+          Search Selected Text
+        </button>
+
+        {/* ── Ask AI submenu ── */}
+        <SubTrigger
+          id="ai"
+          label="Ask AI"
+          activeSubmenu={activeSubmenu}
+          setActiveSubmenu={setActiveSubmenu}
+        >
+          <button type="button" role="menuitem" onClick={() => fire("ai-explain")}>
+            Explain
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("ai-summarize")}>
+            Summarize
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("ai-simplify")}>
+            Simplify
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("ai-translate")}>
+            Translate
+          </button>
+          <button type="button" role="menuitem" onClick={() => fire("ai-continue")}>
+            Continue
+          </button>
+          <div className="menu-divider" />
+          <button type="button" role="menuitem" onClick={() => fire("ai-custom")}>
+            Ask Custom Question…
+          </button>
+        </SubTrigger>
+
+        <div className="menu-divider" />
+
+        {/* ── Select All ── */}
+        <button type="button" role="menuitem" onClick={() => fire("select-all")}>
+          Select All <span className="shortcut-label">Ctrl+A</span>
+        </button>
+      </div>
+    );
+  }
+
+  // ── Note context ─────────────────────────────────────────────────────────────
+  if (context === "note") {
+    return (
+      <div
+        ref={menuRef}
+        className="editor-context-menu"
+        style={{ position: "fixed", top: coords.top, left: coords.left, zIndex: 9999 }}
+        role="menu"
+        aria-label="Note selection actions"
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("copy")}>
+          Copy <span className="shortcut-label">Ctrl+C</span>
+        </button>
+        <div className="menu-divider" />
+        <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("ai-explain")}>
+          Explain
+        </button>
+        <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("ai-summarize")}>
+          Summarize
+        </button>
+        <div className="menu-divider" />
+        <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("search-selected")}>
+          Search Google
+        </button>
+      </div>
+    );
+  }
+
+  // ── AI context ───────────────────────────────────────────────────────────────
   return (
     <div
       ref={menuRef}
-      className="scm-root"
-      style={style}
+      className="editor-context-menu"
+      style={{ position: "fixed", top: coords.top, left: coords.left, zIndex: 9999 }}
       role="menu"
-      aria-label="Selection actions"
+      aria-label="AI response actions"
       onContextMenu={(e) => e.preventDefault()}
     >
-      <ul className="scm-list">
-        {context === "pdf"  && pdfItems}
-        {context === "note" && noteItems}
-        {context === "ai"   && aiItems}
-      </ul>
+      <button type="button" role="menuitem" onClick={() => fire("copy")}>
+        Copy <span className="shortcut-label">Ctrl+C</span>
+      </button>
+      <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("km-create-note")}>
+        Create Note
+      </button>
+      <div className="menu-divider" />
+      <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("ai-explain")}>
+        Explain
+      </button>
+      <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("ai-simplify")}>
+        Simplify
+      </button>
+      <button type="button" role="menuitem" disabled={!hasSelection} onClick={() => fire("ai-continue")}>
+        Continue
+      </button>
     </div>
   );
 }
