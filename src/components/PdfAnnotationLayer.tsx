@@ -64,6 +64,13 @@ export function PdfAnnotationLayer({
     (a) => a.page_number === pageIndex,
   );
 
+  console.log(`[PDF Pipeline Debug] Step 6: PdfAnnotationLayer mounted/updated for pageIndex ${pageIndex}`, {
+    totalIncomingAnnotations: annotations.length,
+    matchedPageAnnotations: pageAnnotations.length,
+    pageWidth,
+    pageHeight,
+  });
+
   if (pageAnnotations.length === 0) return null;
 
   return (
@@ -86,21 +93,32 @@ export function PdfAnnotationLayer({
         const styleFn = TYPE_STYLES[annotation.annotation_type] ?? TYPE_STYLES.highlight;
         const rects = annotation.bounding_rects ?? [];
 
-        return rects.map((rect, rectIdx) => (
-          <div
-            key={`${annotation.id}-${rectIdx}`}
-            className={`pdf-annotation-rect${isFlashing ? " pdf-annotation-flash" : ""}`}
-            style={{
-              position: "absolute",
-              left: rect.x,
-              top: rect.y,
-              width: rect.width,
-              height: rect.height,
-              borderRadius: 2,
-              ...styleFn(annotation.color),
-            }}
-          />
-        ));
+        console.log(`[PDF Pipeline Debug] Step 7: Rendering annotation ID ${annotation.id} of type ${annotation.annotation_type} with ${rects.length} rects`);
+
+        return rects.map((rect, rectIdx) => {
+          console.log(`[PDF Pipeline Debug] Step 8/9: Computed CSS Rect for ID ${annotation.id}:`, {
+            left: rect.x,
+            top: rect.y,
+            width: rect.width,
+            height: rect.height,
+            isOutsidePage: rect.x < 0 || rect.y < 0 || rect.x > pageWidth || rect.y > pageHeight,
+          });
+          return (
+            <div
+              key={`${annotation.id}-${rectIdx}`}
+              className={`pdf-annotation-rect${isFlashing ? " pdf-annotation-flash" : ""}`}
+              style={{
+                position: "absolute",
+                left: rect.x,
+                top: rect.y,
+                width: rect.width,
+                height: rect.height,
+                borderRadius: 2,
+                ...styleFn(annotation.color),
+              }}
+            />
+          );
+        });
       })}
     </div>
   );

@@ -348,8 +348,19 @@ export function PdfCanvasViewer({
 
   const handleMenuAction = useCallback(
     (action: SelectionMenuAction, selectedText: string) => {
-      if (!selection) return;
+      if (!selection) {
+        console.warn("[PDF Pipeline Debug] No selection found when triggering action:", action);
+        return;
+      }
       const { pageIndex, rects } = selection;
+
+      console.log("[PDF Pipeline Debug] Step 1: Text Selection Captured", {
+        selectedText,
+        pageIndex,
+        pageNumber: pageIndex + 1,
+        rectsLength: rects.length,
+        rects,
+      });
 
       switch (action) {
         // ── Highlight colours → create highlight annotation with specific colour ──
