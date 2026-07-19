@@ -5,9 +5,9 @@
  * on a single PDF page as absolutely-positioned divs that sit above the
  * text layer without touching the canvas.
  *
- * `pageWidth` and `pageHeight` are the rendered CSS pixel dimensions of the
- * page.  All bounding_rects stored on an annotation are already in those same
- * pixel units (captured at creation time), so we apply them directly.
+ * bounding_rects are stored as 0–1 fractions of the page dimensions at
+ * creation time, so they remain accurate across zoom changes and reloads.
+ * We multiply by pageWidth/pageHeight here to get CSS pixel positions.
  */
 
 import type { Annotation } from "../types";
@@ -64,13 +64,6 @@ export function PdfAnnotationLayer({
     (a) => a.page_number === pageIndex,
   );
 
-  console.log(`[PDF Pipeline Debug] Step 6: PdfAnnotationLayer mounted/updated for pageIndex ${pageIndex}`, {
-    totalIncomingAnnotations: annotations.length,
-    matchedPageAnnotations: pageAnnotations.length,
-    pageWidth,
-    pageHeight,
-  });
-
   if (pageAnnotations.length === 0) return null;
 
   return (
@@ -93,32 +86,22 @@ export function PdfAnnotationLayer({
         const styleFn = TYPE_STYLES[annotation.annotation_type] ?? TYPE_STYLES.highlight;
         const rects = annotation.bounding_rects ?? [];
 
-        console.log(`[PDF Pipeline Debug] Step 7: Rendering annotation ID ${annotation.id} of type ${annotation.annotation_type} with ${rects.length} rects`);
-
-        return rects.map((rect, rectIdx) => {
-          console.log(`[PDF Pipeline Debug] Step 8/9: Computed CSS Rect for ID ${annotation.id}:`, {
-            left: rect.x,
-            top: rect.y,
-            width: rect.width,
-            height: rect.height,
-            isOutsidePage: rect.x < 0 || rect.y < 0 || rect.x > pageWidth || rect.y > pageHeight,
-          });
-          return (
-            <div
-              key={`${annotation.id}-${rectIdx}`}
-              className={`pdf-annotation-rect${isFlashing ? " pdf-annotation-flash" : ""}`}
-              style={{
-                position: "absolute",
-                left: rect.x,
-                top: rect.y,
-                width: rect.width,
-                height: rect.height,
-                borderRadius: 2,
-                ...styleFn(annotation.color),
-              }}
-            />
-          );
-        });
+        return rects.map((rect, rectIdx) => (
+          <div
+            key={`${annotation.id}-${rectIdx}`}
+            className={`pdf-annotation-rect${isFlashing ? " pdf-annotation-flash" : ""}`}
+            style={{
+              position: "absolute",
+              // rects are 0-1 fractions of page dimensions — scale to px here
+              left:   rect.x      * pageWidth,
+              top:    rect.y      * pageHeight,
+              width:  rect.width  * pageWidth,
+              height: rect.height * pageHeight,
+              borderRadius: 2,
+              ...styleFn(annotation.color),
+            }}
+          />
+        ));
       })}
     </div>
   );

@@ -32,6 +32,7 @@ interface NoteSidePanelProps {
     selectedText: string,
     rects: BoundingRect[],
     action: SelectionMenuAction,
+    sourceId: number,
   ) => void;
   onJumpToPage: (pageIndex: number | null) => void;
   onFlash: (id: number | null) => void;

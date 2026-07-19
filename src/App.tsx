@@ -742,47 +742,33 @@ export default function App() {
     selectedText: string,
     rects: BoundingRect[],
     action: SelectionMenuAction,
+    sourceId: number,
   ) => {
-    console.log("[PDF Pipeline Debug] Step 2: handleAnnotationCreate called with action:", action);
-    if (!authToken || !selectedNote) {
-      console.warn("[PDF Pipeline Debug] Bailing out because authToken or selectedNote is missing.", {
-        hasAuthToken: !!authToken,
-        hasSelectedNote: !!selectedNote,
-      });
-      return;
-    }
+    if (!authToken || !selectedNote) return;
 
-    // Determine color and type from context menu action
+    // Determine color and type from the menu action
     let color = "#FFD60A";
     let type: Annotation["annotation_type"] = "highlight";
 
     if (action.startsWith("color-")) {
       const colorVal = action.replace("color-", "");
-      if (colorVal === "green")  color = "#4ADE80";
+      if      (colorVal === "green")  color = "#4ADE80";
       else if (colorVal === "blue")   color = "#60A5FA";
       else if (colorVal === "pink")   color = "#F472B6";
       else if (colorVal === "orange") color = "#FB923C";
     }
 
-    if (action === "annotate-underline")       type = "underline";
-    else if (action === "annotate-strikethrough") type = "strikethrough";
-    else if (action === "annotate-squiggly")   type = "strikethrough"; // closest visual
-    else if (action === "annotate-redact")     type = "strikethrough"; // stored as strikethrough for now
-    else if (action === "annotate-comment")    type = "comment";
-    else if (action === "annotate-bookmark")   type = "bookmark";
+    if      (action === "annotate-underline")       type = "underline";
+    else if (action === "annotate-strikethrough")   type = "strikethrough";
+    else if (action === "annotate-squiggly")        type = "strikethrough";
+    else if (action === "annotate-redact")          type = "strikethrough";
+    else if (action === "annotate-comment")         type = "comment";
+    else if (action === "annotate-bookmark")        type = "bookmark";
 
-    // Find current active PDF upload ID
-    console.log("[PDF Pipeline Debug] Step 3: Finding active PDF. selectedNote.uploads:", selectedNote.uploads);
-    const activePdf = selectedNote.uploads.find((u) => u.kind === "pdf");
-    if (!activePdf) {
-      console.error("[PDF Pipeline Debug] Bailing out because activePdf is undefined in selectedNote.uploads. Files:", selectedNote.uploads);
-      return;
-    }
-    console.log("[PDF Pipeline Debug] activePdf identified:", activePdf);
-
+    // sourceId comes directly from the viewer that was clicked — no guessing.
     const payload = {
       source_type: "pdf" as const,
-      source_id: activePdf.id,
+      source_id: sourceId,
       page_number: pageIndex,
       selected_text: selectedText,
       bounding_rects: rects,
@@ -791,22 +777,14 @@ export default function App() {
       comment: type === "comment" ? "New comment" : undefined,
     };
 
-    console.log("[PDF Pipeline Debug] Step 4: Sending POST request to /api/protected/annotations with payload:", payload);
-
     try {
       const newAnn = await annotationsService.createAnnotation(authToken, payload);
-      console.log("[PDF Pipeline Debug] Response from createAnnotation:", newAnn);
-
-      console.log("[PDF Pipeline Debug] Step 5: Inserting new annotation into local React state.");
-      setAnnotations((prev) => {
-        const next = [...prev, newAnn];
-        console.log("[PDF Pipeline Debug] New local annotations state size:", next.length);
-        return next;
-      });
+      setAnnotations((prev) => [...prev, newAnn]);
     } catch (e) {
-      console.error("[PDF Pipeline Debug] Error in Step 4/5 - Failed to create annotation:", e);
+      console.error("Failed to create annotation", e);
     }
   };
+
 
   const handleDeleteAnnotation = async (id: number) => {
     if (!authToken) return;

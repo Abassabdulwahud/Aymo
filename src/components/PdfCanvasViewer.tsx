@@ -22,6 +22,7 @@ interface PdfCanvasViewerProps {
     selectedText: string,
     rects: BoundingRect[],
     action: SelectionMenuAction,
+    sourceId: number,
   ) => void;
   onAskAI: (prompt: string) => void;
   onCopyText: (text: string, withCitation?: boolean, pageNumber?: number) => void;
@@ -324,12 +325,13 @@ export function PdfCanvasViewer({
         const pageRect = pageLayer.getBoundingClientRect();
         const clientRects = Array.from(range.getClientRects());
 
-        // Convert from viewport-relative to page-relative coordinates
+        // Normalise to 0-1 fractions of page size so coordinates survive
+        // zoom changes and page re-renders at different scale factors.
         const rects: BoundingRect[] = clientRects.map((r) => ({
-          x: r.left - pageRect.left,
-          y: r.top  - pageRect.top,
-          width:  r.width,
-          height: r.height,
+          x: (r.left - pageRect.left) / pageRect.width,
+          y: (r.top  - pageRect.top)  / pageRect.height,
+          width:  r.width  / pageRect.width,
+          height: r.height / pageRect.height,
         }));
 
         // Show menu just below the last rect of the selection
@@ -348,59 +350,49 @@ export function PdfCanvasViewer({
 
   const handleMenuAction = useCallback(
     (action: SelectionMenuAction, selectedText: string) => {
-      if (!selection) {
-        console.warn("[PDF Pipeline Debug] No selection found when triggering action:", action);
-        return;
-      }
+      if (!selection) return;
       const { pageIndex, rects } = selection;
 
-      console.log("[PDF Pipeline Debug] Step 1: Text Selection Captured", {
-        selectedText,
-        pageIndex,
-        pageNumber: pageIndex + 1,
-        rectsLength: rects.length,
-        rects,
-      });
-
       switch (action) {
+
         // ── Highlight colours → create highlight annotation with specific colour ──
         case "color-yellow":
-          onAnnotationCreate(pageIndex, selectedText, rects, "color-yellow");
+          onAnnotationCreate(pageIndex, selectedText, rects, "color-yellow", sourceId);
           break;
         case "color-green":
-          onAnnotationCreate(pageIndex, selectedText, rects, "color-green");
+          onAnnotationCreate(pageIndex, selectedText, rects, "color-green", sourceId);
           break;
         case "color-blue":
-          onAnnotationCreate(pageIndex, selectedText, rects, "color-blue");
+          onAnnotationCreate(pageIndex, selectedText, rects, "color-blue", sourceId);
           break;
         case "color-pink":
-          onAnnotationCreate(pageIndex, selectedText, rects, "color-pink");
+          onAnnotationCreate(pageIndex, selectedText, rects, "color-pink", sourceId);
           break;
         case "color-orange":
-          onAnnotationCreate(pageIndex, selectedText, rects, "color-orange");
+          onAnnotationCreate(pageIndex, selectedText, rects, "color-orange", sourceId);
           break;
 
         // ── Format / annotation type actions ──
         case "annotate-highlight":
-          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-highlight");
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-highlight", sourceId);
           break;
         case "annotate-underline":
-          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-underline");
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-underline", sourceId);
           break;
         case "annotate-strikethrough":
-          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-strikethrough");
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-strikethrough", sourceId);
           break;
         case "annotate-squiggly":
-          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-squiggly");
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-squiggly", sourceId);
           break;
         case "annotate-redact":
-          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-redact");
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-redact", sourceId);
           break;
         case "annotate-comment":
-          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-comment");
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-comment", sourceId);
           break;
         case "annotate-bookmark":
-          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-bookmark");
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-bookmark", sourceId);
           break;
 
         // ── Remove actions (UI only for now — persist via separate delete call) ──
@@ -411,10 +403,10 @@ export function PdfCanvasViewer({
 
         // ── Insert shapes / sticky notes ──
         case "insert-comment":
-          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-comment");
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-comment", sourceId);
           break;
         case "insert-sticky-note":
-          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-comment");
+          onAnnotationCreate(pageIndex, selectedText, rects, "annotate-comment", sourceId);
           break;
         // Shape insert actions are fire-and-forget for now
         case "insert-textbox":
