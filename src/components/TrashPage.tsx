@@ -1,8 +1,16 @@
 import React, { useEffect, useState } from "react";
 import { Trash2, RotateCcw, Search, Trash } from "lucide-react";
-import { BackendNote, listTrashedNotes, restoreNote, permanentlyDeleteNote, emptyTrash } from "../services/notesService";
+import { BackendNote, BackendTag } from "../services/notesService";
 import { useI18n } from "../i18n";
 import { AccountSettingsMenu } from "./AccountSettingsMenu";
+import {
+  LocalNote,
+  listLocalNotes,
+  getLocalNote,
+  putLocalNote,
+  deleteLocalNotePermanently,
+  getActiveWorkspaceId,
+} from "../services/localWorkspaceDatabase";
 
 import { LanguageCode } from "../i18n";
 
@@ -15,6 +23,22 @@ interface TrashPageProps {
   onLanguageChange: (next: any) => void;
   onLogout: () => void;
   onNoteRestored: (note: BackendNote) => void;
+}
+
+function mapLocalNoteToBackendNote(localNote: LocalNote): BackendNote {
+  return {
+    id: localNote.id,
+    user_id: 1,
+    title: localNote.title,
+    body: localNote.body,
+    is_pinned: localNote.isPinned,
+    is_favorited: localNote.isFavorited,
+    created_at: localNote.createdAt,
+    updated_at: localNote.updatedAt,
+    deleted_at: localNote.deletedAt,
+    tags: localNote.tags.map((t, idx) => ({ id: idx, name: t })),
+    files: localNote.files || [],
+  };
 }
 
 export const TrashPage: React.FC<TrashPageProps> = ({
@@ -34,14 +58,23 @@ export const TrashPage: React.FC<TrashPageProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   // Confirmation dialog state
-  const [confirmTarget, setConfirmTarget] = useState<{ type: "single" | "all"; noteId?: number; title?: string } | null>(null);
+  const [confirmTarget, setConfirmTarget] = useState<{ type: "single" | "all"; noteId?: string | number; title?: string } | null>(null);
 
   const loadTrash = async (query = "") => {
     setLoading(true);
     setError(null);
     try {
-      const items = await listTrashedNotes(authToken, query);
-      setTrashedNotes(items);
+      const workspaceId = await getActiveWorkspaceId();
+      if (!workspaceId) {
+        setTrashedNotes([]);
+        return;
+      }
+      const localNotes = await listLocalNotes(workspaceId, true);
+      const filtered = localNotes.filter((n) => {
+        const q = query.toLowerCase();
+        return !q || n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q);
+      });
+      setTrashedNotes(filtered.map(mapLocalNoteToBackendNote));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load trashed notes.");
     } finally {
@@ -56,11 +89,15 @@ export const TrashPage: React.FC<TrashPageProps> = ({
     return () => clearTimeout(handler);
   }, [search, authToken]);
 
-  const handleRestore = async (noteId: number) => {
+  const handleRestore = async (noteId: string | number) => {
     try {
-      const restored = await restoreNote(authToken, noteId);
+      const localNote = await getLocalNote(String(noteId));
+      if (!localNote) return;
+      localNote.deletedAt = null;
+      localNote.updatedAt = new Date().toISOString();
+      await putLocalNote(localNote);
       setTrashedNotes((prev) => prev.filter((n) => n.id !== noteId));
-      onNoteRestored(restored);
+      onNoteRestored(mapLocalNoteToBackendNote(localNote));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to restore note.");
     }
@@ -70,10 +107,16 @@ export const TrashPage: React.FC<TrashPageProps> = ({
     if (!confirmTarget) return;
     try {
       if (confirmTarget.type === "single" && confirmTarget.noteId !== undefined) {
-        await permanentlyDeleteNote(authToken, confirmTarget.noteId);
+        await deleteLocalNotePermanently(String(confirmTarget.noteId));
         setTrashedNotes((prev) => prev.filter((n) => n.id !== confirmTarget.noteId));
       } else if (confirmTarget.type === "all") {
-        await emptyTrash(authToken);
+        const workspaceId = await getActiveWorkspaceId();
+        if (workspaceId) {
+          const localNotes = await listLocalNotes(workspaceId, true);
+          for (const note of localNotes) {
+            await deleteLocalNotePermanently(note.id);
+          }
+        }
         setTrashedNotes([]);
       }
     } catch (err) {

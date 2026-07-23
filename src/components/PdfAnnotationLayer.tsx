@@ -17,7 +17,7 @@ interface PdfAnnotationLayerProps {
   pageIndex: number;
   pageWidth: number;
   pageHeight: number;
-  flashId?: number | null;
+  flashId?: string | number | null;
 }
 
 const TYPE_STYLES: Record<

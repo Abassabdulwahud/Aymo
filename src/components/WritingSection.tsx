@@ -29,7 +29,7 @@ interface WritingSectionProps {
   onBodyChange: (value: string) => void;
   onRecordToggle: () => void | Promise<void>;
   onCursorChange: (start: number, end: number) => void;
-  notes?: Array<{ id: number; title: string; cardTitle: string }>;
+  notes?: Array<{ id: string | number; title: string; cardTitle: string }>;
   onAskAI?: (prompt: string) => void;
 }
 

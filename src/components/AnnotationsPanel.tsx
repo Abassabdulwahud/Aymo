@@ -15,9 +15,9 @@ import type { Annotation, AnnotationType } from "../types";
 interface AnnotationsPanelProps {
   annotations: Annotation[];
   onJumpToPage: (pageIndex: number) => void;
-  onFlash: (annotationId: number) => void;
-  onDelete: (annotationId: number) => void;
-  onUpdateComment: (annotationId: number, comment: string) => void;
+  onFlash: (annotationId: string | number) => void;
+  onDelete: (annotationId: string | number) => void;
+  onUpdateComment: (annotationId: string | number, comment: string) => void;
   onCreateNote: (annotation: Annotation) => void;
   onAppendToNote: (annotation: Annotation) => void;
   onClose: () => void;
@@ -60,9 +60,9 @@ export function AnnotationsPanel({
   onAppendToNote,
   onClose,
 }: AnnotationsPanelProps) {
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | number | null>(null);
   const [editText, setEditText] = useState("");
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | number | null>(null);
 
   const grouped = groupByPage(annotations);
 
@@ -78,7 +78,7 @@ export function AnnotationsPanel({
     setEditText(annotation.comment ?? "");
   };
 
-  const commitEdit = (annotationId: number) => {
+  const commitEdit = (annotationId: string | number) => {
     onUpdateComment(annotationId, editText);
     setEditingId(null);
   };

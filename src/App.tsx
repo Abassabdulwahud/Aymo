@@ -49,9 +49,19 @@ import { loadNoteRightPanelLayout, saveNoteRightPanelLayout } from "./services/n
 import * as annotationsService from "./services/annotationsService";
 import { Annotation, BoundingRect } from "./types";
 import { SelectionMenuAction } from "./components/SelectionContextMenu";
+import {
+  LocalNote,
+  listLocalNotes,
+  getLocalNote,
+  putLocalNote,
+  deleteLocalNotePermanently,
+  getActiveWorkspaceId,
+  generateUuid,
+} from "./services/localWorkspaceDatabase";
+
 
 interface HomeNote {
-  id: number;
+  id: string | number;
   title: string;
   cardTitle: string;
   body: string;
@@ -203,6 +213,20 @@ function mapNoteToHomeNote(note: BackendNote, labels: { untitled: string; untagg
   };
 }
 
+function mapLocalNoteToHomeNote(localNote: LocalNote, labels: { untitled: string; untagged: string }): HomeNote {
+  return {
+    id: localNote.id,
+    title: localNote.title,
+    cardTitle: buildHomeCardTitle(localNote.title, localNote.body, labels.untitled),
+    body: localNote.body,
+    tag: localNote.tags[0] ?? labels.untagged,
+    pinned: localNote.isPinned,
+    updatedAt: formatDisplayDate(localNote.updatedAt),
+    updatedAtIso: localNote.updatedAt,
+    uploads: localNote.files || [],
+  };
+}
+
 function mapCachedResponsesToMessages(
   items: Array<{ id: string; question: string; response: string }>,
 ): ChatMessage[] {
@@ -295,7 +319,7 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [tagCatalog, setTagCatalog] = useState<string[]>([]);
   const [activeTag, setActiveTag] = useState<string>("all");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<string | number | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingStatus, setRecordingStatus] = useState(t("record.ready"));
   const [recordingError, setRecordingError] = useState<string | null>(null);
@@ -309,20 +333,20 @@ export default function App() {
   const [profile, setProfile] = useState({ name: "Aya Morgan", email: "aya@aymo.app" });
   const [isBusy, setIsBusy] = useState(false);
   const [homeError, setHomeError] = useState<string | null>(null);
-  const [openNoteMenuId, setOpenNoteMenuId] = useState<number | null>(null);
-  const [chatMessagesByNote, setChatMessagesByNote] = useState<Record<number, ChatMessage[]>>({});
+  const [openNoteMenuId, setOpenNoteMenuId] = useState<string | number | null>(null);
+  const [chatMessagesByNote, setChatMessagesByNote] = useState<Record<string | number, ChatMessage[]>>({});
   
   // Annotation system state
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [flashAnnotationId, setFlashAnnotationId] = useState<number | null>(null);
+  const [flashAnnotationId, setFlashAnnotationId] = useState<string | number | null>(null);
   const [jumpToPage, setJumpToPage] = useState<number | null>(null);
 
   const speechRecognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const transcriptBufferRef = useRef("");
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const editorSelectionRef = useRef({ start: 0, end: 0 });
-  const lastSyncedRef = useRef<Record<number, { title: string; body: string }>>({});
-  const queuedExtractionRef = useRef<Record<number, true>>({});
+  const lastSyncedRef = useRef<Record<string | number, { title: string; body: string }>>({});
+  const queuedExtractionRef = useRef<Record<string | number, true>>({});
   // Tracks the IDs of files that we just uploaded. Polling is suppressed for
   // these entries until the backend confirms them (they flip to a real positive ID).
   const pendingUploadIdsRef = useRef<Set<number>>(new Set());
@@ -339,7 +363,8 @@ export default function App() {
     [t],
   );
   const noteRouteMatch = matchPath("/notes/:noteId", location.pathname);
-  const routeNoteId = noteRouteMatch ? Number(noteRouteMatch.params.noteId) || null : null;
+  const routeNoteId = noteRouteMatch ? noteRouteMatch.params.noteId || null : null;
+
 
   const playRecordingTone = async (frequency: number, durationMs: number) => {
     const AudioContextApi = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -400,6 +425,18 @@ export default function App() {
           setAuthenticated(false);
           setSessionStatus("unauthenticated");
           setIsWorkspaceLoading(false);
+        }
+        return;
+      }
+
+      if (authToken === "local-offline-session-token") {
+        if (mounted) {
+          setProfile({
+            name: "Offline User",
+            email: "offline@aymo.app",
+          });
+          setAuthenticated(true);
+          setSessionStatus("ready");
         }
         return;
       }
@@ -468,54 +505,68 @@ export default function App() {
     let mounted = true;
 
     const hydrateWorkspace = async () => {
-      if (!authToken || !isAuthenticated) {
-        if (mounted) {
-          setIsWorkspaceLoading(false);
-          setNotes([]);
-          setTagCatalog([]);
-          setSelectedId(null);
-        }
-        return;
-      }
-
       try {
         if (mounted) {
           setIsWorkspaceLoading(true);
         }
-        const [preferences, noteItems, tagItems] = await Promise.all([
-          loadPreferences(authToken),
-          listNotes(authToken),
-          listTags(authToken),
-        ]);
-        if (!mounted) return;
-
-        // Load trash count independently — never let it block note loading
-        try {
-          const trashedItems = await listTrashedNotes(authToken);
-          if (mounted) setTrashedNoteCount(trashedItems.length);
-        } catch {
-          // Trash endpoint not yet available or failed — silently ignore
-          if (mounted) setTrashedNoteCount(0);
+        
+        const workspaceId = await getActiveWorkspaceId();
+        if (!workspaceId) {
+          if (mounted) {
+            setIsWorkspaceLoading(false);
+            setNotes([]);
+            setTagCatalog([]);
+            setSelectedId(null);
+          }
+          return;
         }
 
-        const mappedNotes = noteItems.map((note) => mapNoteToHomeNote(note, noteLabels));
+        // Fetch local notes from IndexedDB
+        const localNotes = await listLocalNotes(workspaceId, false);
+        const trashedNotes = await listLocalNotes(workspaceId, true);
+
+        if (!mounted) return;
+
+        // Calculate tags from local notes
+        const localTagsSet = new Set<string>();
+        for (const note of localNotes) {
+          for (const t of note.tags) {
+            if (t.trim()) localTagsSet.add(t.trim());
+          }
+        }
+        const tagItems = Array.from(localTagsSet);
+
+        const mappedNotes = localNotes.map((note) => mapLocalNoteToHomeNote(note, noteLabels));
         lastSyncedRef.current = Object.fromEntries(
           mappedNotes.map((note) => [note.id, { title: note.title, body: note.body }]),
         );
-        setAIProvider(loadAIProvider());
-        setDarkMode(preferences.theme === "dark");
-        const normalizedLanguage = normalizeLanguageCode(preferences.language);
-        setLanguage(normalizedLanguage);
-        setAppLanguage(normalizedLanguage);
+
         setNotes(mappedNotes);
-        setTagCatalog(tagItems.map((tag) => tag.name));
+        setTrashedNoteCount(trashedNotes.length);
+        setTagCatalog(tagItems);
         setSelectedId((current) => {
           if (current && mappedNotes.some((note) => note.id === current)) {
             return current;
           }
           return mappedNotes[0]?.id ?? null;
         });
-      } catch {
+
+        // Load theme and other options safely offline
+        try {
+          const preferences = await loadPreferences(authToken || "local-default");
+          setDarkMode(preferences.theme === "dark");
+          const normalizedLanguage = normalizeLanguageCode(preferences.language);
+          setLanguage(normalizedLanguage);
+          setAppLanguage(normalizedLanguage);
+        } catch {
+          // Fallback to defaults
+          setDarkMode(false);
+          setLanguage("en");
+          setAppLanguage("en");
+        }
+
+      } catch (err) {
+        console.error("Failed to load workspace from local storage", err);
         if (!mounted) return;
         setNotes([]);
         setTagCatalog([]);
@@ -595,11 +646,18 @@ export default function App() {
   const finalizeAuth = async (token: string) => {
     saveAuthToken(token);
     setAuthToken(token);
-    const user = await fetchCurrentUser(token);
-    setProfile({
-      name: user.full_name || user.email.split("@")[0] || t("app.sessionUserFallback"),
-      email: user.email,
-    });
+    if (token === "local-offline-session-token") {
+      setProfile({
+        name: "Offline User",
+        email: "offline@aymo.app",
+      });
+    } else {
+      const user = await fetchCurrentUser(token);
+      setProfile({
+        name: user.full_name || user.email.split("@")[0] || t("app.sessionUserFallback"),
+        email: user.email,
+      });
+    }
     setAuthenticated(true);
     setSessionStatus("ready");
     navigate("/home", { replace: true });
@@ -685,9 +743,9 @@ export default function App() {
       }
 
       try {
-        const items = await listAIResponses(authToken, selectedNote.id);
+        const items = await listAIResponses(authToken, selectedNote.id as any);
         if (cancelled) return;
-        setChatMessagesByNote((prev) => {
+        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => {
           if (prev[selectedNote.id]) {
             return prev;
           }
@@ -718,7 +776,7 @@ export default function App() {
         const list: Annotation[] = [];
         for (const file of selectedNote.uploads) {
           if (file.kind === "pdf") {
-            const fileAnns = await annotationsService.listAnnotations(authToken, "pdf", file.id);
+            const fileAnns = await annotationsService.listAnnotations(authToken, "pdf", file.id as any);
             list.push(...fileAnns);
           }
         }
@@ -736,13 +794,12 @@ export default function App() {
     };
   }, [authToken, selectedNote?.uploads, selectedNote?.id]);
 
-  // Annotation system handlers
   const handleAnnotationCreate = async (
     pageIndex: number,
     selectedText: string,
     rects: BoundingRect[],
     action: SelectionMenuAction,
-    sourceId: number,
+    sourceId: string | number,
   ) => {
     if (!authToken || !selectedNote) return;
 
@@ -768,7 +825,7 @@ export default function App() {
     // sourceId comes directly from the viewer that was clicked — no guessing.
     const payload = {
       source_type: "pdf" as const,
-      source_id: sourceId,
+      source_id: sourceId as any,
       page_number: pageIndex,
       selected_text: selectedText,
       bounding_rects: rects,
@@ -786,20 +843,20 @@ export default function App() {
   };
 
 
-  const handleDeleteAnnotation = async (id: number) => {
+  const handleDeleteAnnotation = async (id: string | number) => {
     if (!authToken) return;
     try {
-      await annotationsService.deleteAnnotation(authToken, id);
+      await annotationsService.deleteAnnotation(authToken, id as any);
       setAnnotations((prev) => prev.filter((a) => a.id !== id));
     } catch (e) {
       console.error("Failed to delete annotation", e);
     }
   };
 
-  const handleUpdateAnnotationComment = async (id: number, comment: string) => {
+  const handleUpdateAnnotationComment = async (id: string | number, comment: string) => {
     if (!authToken) return;
     try {
-      const updated = await annotationsService.updateAnnotation(authToken, id, { comment });
+      const updated = await annotationsService.updateAnnotation(authToken, id as any, { comment });
       setAnnotations((prev) => prev.map((a) => (a.id === id ? updated : a)));
     } catch (e) {
       console.error("Failed to update annotation comment", e);
@@ -807,14 +864,28 @@ export default function App() {
   };
 
   const handleCreateNoteFromAnnotation = async (text: string, pageNumber: number) => {
-    if (!authToken) return;
     try {
-      const created = mapNoteToHomeNote(await createNote(authToken), noteLabels);
-      const updated = await updateNote(authToken, created.id, {
+      const workspaceId = await getActiveWorkspaceId();
+      if (!workspaceId) return;
+
+      const now = new Date().toISOString();
+      const localNote: LocalNote = {
+        id: generateUuid(),
+        workspaceId,
         title: `Highlight from PDF Page ${pageNumber}`,
         body: text,
-      });
-      const mapped = mapNoteToHomeNote(updated, noteLabels);
+        isPinned: false,
+        isFavorited: false,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        tags: [],
+        files: [],
+      };
+
+      await putLocalNote(localNote);
+      const mapped = mapLocalNoteToHomeNote(localNote, noteLabels);
+      
       lastSyncedRef.current[mapped.id] = {
         title: mapped.title,
         body: mapped.body,
@@ -828,19 +899,22 @@ export default function App() {
   };
 
   const handleAppendNoteFromAnnotation = async (text: string, pageNumber: number) => {
-    if (!authToken || !selectedNote) return;
+    if (!selectedNote) return;
     try {
-      const newBody = `${selectedNote.body}\n\n> ${text} (Page ${pageNumber})`;
-      const updated = await updateNote(authToken, selectedNote.id, {
-        body: newBody,
-      });
-      replaceNote(mapNoteToHomeNote(updated, noteLabels));
+      const localNote = await getLocalNote(String(selectedNote.id));
+      if (!localNote) return;
+
+      localNote.body = `${localNote.body}\n\n> ${text} (Page ${pageNumber})`;
+      localNote.updatedAt = new Date().toISOString();
+      await putLocalNote(localNote);
+
+      replaceNote(mapLocalNoteToHomeNote(localNote, noteLabels));
     } catch (e) {
       console.error("Failed to append highlight to note", e);
     }
   };
 
-  const handleFlashAnnotation = (id: number | null) => {
+  const handleFlashAnnotation = (id: string | number | null) => {
     setFlashAnnotationId(id);
     if (id !== null) {
       setTimeout(() => setFlashAnnotationId(null), 1500);
@@ -848,7 +922,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!authToken || !selectedNote) {
+    if (!selectedNote) {
       return;
     }
 
@@ -858,25 +932,13 @@ export default function App() {
     }
 
     const timeoutId = window.setTimeout(() => {
-      void syncNoteContent(authToken, selectedNote.id, {
-        title: selectedNote.title,
-        body: selectedNote.body,
-      })
-        .then(() => {
-          lastSyncedRef.current[selectedNote.id] = {
-            title: selectedNote.title,
-            body: selectedNote.body,
-          };
-        })
-        .catch(() => {
-          // Save retries naturally on the next local edit pause.
-        });
-    }, 5000);
+      void persistCurrentNote();
+    }, 1500); // Save quickly on local pauses (1.5 seconds)
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [authToken, selectedNote]);
+  }, [selectedNote]);
 
   const sidebarTags = useMemo(() => {
     const noteTags = notes.map((note) => note.tag).filter(Boolean);
@@ -908,7 +970,7 @@ export default function App() {
   const primarySidebarItems = sidebarTags.slice(0, 2);
   const tagSidebarItems = sidebarTags.slice(2);
 
-  const openNote = (id: number) => {
+  const openNote = (id: string | number) => {
     setOpenNoteMenuId(null);
     setSelectedId(id);
     navigate(`/notes/${id}`);
@@ -931,7 +993,7 @@ export default function App() {
     if (Date.now() - lastUploadAtRef.current < 2000) return;
 
     try {
-      const files = await getNoteFiles(authToken, selectedNote.id);
+      const files = await getNoteFiles(authToken, selectedNote.id as any);
       const mapped = files.map((file) => mapFileToUpload(file, noteLabels.justNow));
 
       setNotes((prev) =>
@@ -940,14 +1002,14 @@ export default function App() {
 
           // 1. Always keep optimistic temp entries (negative IDs) so they
           //    remain visible while the network round-trip is still in flight.
-          const tempEntries = note.uploads.filter((u) => u.id < 0);
+          const tempEntries = note.uploads.filter((u) => typeof u.id === "number" && u.id < 0);
 
           // 2. From the polled backend list, skip any ID that is currently
           //    tracked as a pending upload that we haven't confirmed yet.
           //    (pendingUploadIdsRef is cleared once handleUpload swaps in
           //    the real backend record.)
           const freshMapped = mapped.filter(
-            (u) => !pendingUploadIdsRef.current.has(u.id)
+            (u) => !pendingUploadIdsRef.current.has(u.id as any)
           );
 
           // 3. For any real (positive-ID) entries already in local state that
@@ -955,7 +1017,7 @@ export default function App() {
           //    narrow window where the upload just completed but the next poll
           //    fetch started before the backend committed the row.
           const localRealNotInPoll = note.uploads.filter(
-            (u) => u.id > 0 && !mapped.some((m) => m.id === u.id)
+            (u) => typeof u.id === "number" && u.id > 0 && !mapped.some((m) => m.id === u.id)
           );
 
           return {
@@ -992,11 +1054,30 @@ export default function App() {
   }, [selectedNote, authToken]);
 
   const createNewNote = async () => {
-    if (!authToken) return;
     setIsBusy(true);
     setHomeError(null);
     try {
-      const created = mapNoteToHomeNote(await createNote(authToken), noteLabels);
+      const workspaceId = await getActiveWorkspaceId();
+      if (!workspaceId) throw new Error("No active workspace found.");
+
+      const now = new Date().toISOString();
+      const localNote: LocalNote = {
+        id: generateUuid(),
+        workspaceId,
+        title: "",
+        body: "",
+        isPinned: false,
+        isFavorited: false,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        tags: [],
+        files: [],
+      };
+
+      await putLocalNote(localNote);
+      const created = mapLocalNoteToHomeNote(localNote, noteLabels);
+      
       lastSyncedRef.current[created.id] = {
         title: created.title,
         body: created.body,
@@ -1013,13 +1094,19 @@ export default function App() {
     }
   };
 
-  const deleteCurrentNote = async (id: number) => {
-    if (!authToken) return;
+  const deleteCurrentNote = async (id: string | number) => {
     setHomeError(null);
     setOpenNoteMenuId(null);
     try {
-      await deleteNoteRequest(authToken, id);
-      let nextSelectedId: number | null = null;
+      const localNote = await getLocalNote(String(id));
+      if (!localNote) return;
+
+      // Soft delete: move to trash
+      localNote.deletedAt = new Date().toISOString();
+      localNote.updatedAt = new Date().toISOString();
+      await putLocalNote(localNote);
+
+      let nextSelectedId: string | number | null = null;
       setNotes((prev) => {
         const remaining = prev.filter((note) => note.id !== id);
         nextSelectedId = remaining[0]?.id ?? null;
@@ -1037,13 +1124,23 @@ export default function App() {
     }
   };
 
-  const togglePin = async (id: number) => {
-    if (!authToken) return;
+  const togglePin = async (id: string | number) => {
     const existing = notes.find((note) => note.id === id);
     if (!existing) return;
-    const updated = await setNotePin(authToken, id, !existing.pinned);
-    replaceNote(mapNoteToHomeNote(updated, noteLabels));
-    setOpenNoteMenuId(null);
+
+    try {
+      const localNote = await getLocalNote(String(id));
+      if (!localNote) return;
+
+      localNote.isPinned = !localNote.isPinned;
+      localNote.updatedAt = new Date().toISOString();
+      await putLocalNote(localNote);
+
+      replaceNote(mapLocalNoteToHomeNote(localNote, noteLabels));
+      setOpenNoteMenuId(null);
+    } catch (error) {
+      console.error("Failed to pin/unpin note", error);
+    }
   };
 
   const updateCurrentNote = (patch: Partial<HomeNote>) => {
@@ -1057,8 +1154,7 @@ export default function App() {
     });
   };
 
-  const renameNote = async (id: number) => {
-    if (!authToken) return;
+  const renameNote = async (id: string | number) => {
     const existing = notes.find((note) => note.id === id);
     if (!existing) return;
 
@@ -1068,29 +1164,46 @@ export default function App() {
     if (!trimmedTitle) return;
 
     try {
-      const updated = await updateNote(authToken, id, { title: trimmedTitle });
-      replaceNote(mapNoteToHomeNote(updated, noteLabels));
+      const localNote = await getLocalNote(String(id));
+      if (!localNote) return;
+
+      localNote.title = trimmedTitle;
+      localNote.updatedAt = new Date().toISOString();
+      await putLocalNote(localNote);
+
+      replaceNote(mapLocalNoteToHomeNote(localNote, noteLabels));
       setOpenNoteMenuId(null);
     } catch (error) {
       setHomeError(error instanceof Error ? error.message : "Could not rename note.");
     }
   };
 
-  const duplicateNote = async (id: number) => {
-    if (!authToken) return;
+  const duplicateNote = async (id: string | number) => {
     const existing = notes.find((note) => note.id === id);
     if (!existing) return;
 
     try {
-      const created = await createNote(authToken);
-      const duplicated = mapNoteToHomeNote(
-        await updateNote(authToken, created.id, {
-          title: `${existing.cardTitle} copy`,
-          body: existing.body,
-          is_pinned: existing.pinned,
-        }),
-        noteLabels,
-      );
+      const workspaceId = await getActiveWorkspaceId();
+      if (!workspaceId) throw new Error("No active workspace found.");
+
+      const now = new Date().toISOString();
+      const localNote: LocalNote = {
+        id: generateUuid(),
+        workspaceId,
+        title: `${existing.cardTitle} copy`,
+        body: existing.body,
+        isPinned: existing.pinned,
+        isFavorited: false,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        tags: existing.tag && existing.tag !== t("app.noteUntagged") ? [existing.tag] : [],
+        files: [],
+      };
+
+      await putLocalNote(localNote);
+      const duplicated = mapLocalNoteToHomeNote(localNote, noteLabels);
+
       lastSyncedRef.current[duplicated.id] = {
         title: duplicated.title,
         body: duplicated.body,
@@ -1103,7 +1216,7 @@ export default function App() {
     }
   };
 
-  const shareNote = (id: number) => {
+  const shareNote = (id: string | number) => {
     setSelectedId(id);
     setOpenNoteMenuId(null);
     window.alert(t("app.shareCopied"));
@@ -1114,18 +1227,24 @@ export default function App() {
   };
 
   const persistCurrentNote = async () => {
-    if (!authToken || !selectedNote) return;
-    const updated = await updateNote(authToken, selectedNote.id, {
-      title: selectedNote.title,
-      body: selectedNote.body,
-      is_pinned: selectedNote.pinned,
-    });
-    const mapped = mapNoteToHomeNote(updated, noteLabels);
-    lastSyncedRef.current[mapped.id] = {
-      title: mapped.title,
-      body: mapped.body,
-    };
-    replaceNote(mapped);
+    if (!selectedNote) return;
+    try {
+      const localNote = await getLocalNote(String(selectedNote.id));
+      if (!localNote) return;
+
+      localNote.title = selectedNote.title;
+      localNote.body = selectedNote.body;
+      localNote.isPinned = selectedNote.pinned;
+      localNote.updatedAt = new Date().toISOString();
+      await putLocalNote(localNote);
+
+      lastSyncedRef.current[selectedNote.id] = {
+        title: selectedNote.title,
+        body: selectedNote.body,
+      };
+    } catch (error) {
+      console.error("Failed to persist current note locally", error);
+    }
   };
 
   const handleUpload = async (files: FileList | null) => {
@@ -1156,7 +1275,7 @@ export default function App() {
     let uploaded: BackendFile[];
     try {
       uploaded = await Promise.all(
-        Array.from(files).map((file) => uploadFile(authToken, selectedNote.id, file))
+        Array.from(files).map((file) => uploadFile(authToken, selectedNote.id as any, file))
       );
     } catch (error) {
       // Upload failed — replace temp entries with an error state and bail out.
@@ -1166,7 +1285,7 @@ export default function App() {
           return {
             ...note,
             uploads: note.uploads.map((u) =>
-              u.id < 0
+              typeof u.id === "number" && u.id < 0
                 ? { ...u, extractionStatus: "failed", extractionError: "Upload failed. Please try again." }
                 : u
             ),
@@ -1192,7 +1311,7 @@ export default function App() {
       prev.map((note) => {
         if (note.id !== noteIdSnapshot) return note;
         const realMapped = uploaded.map((f) => mapFileToUpload(f, noteLabels.justNow));
-        const nonTempExisting = note.uploads.filter((u) => u.id >= 0);
+        const nonTempExisting = note.uploads.filter((u) => typeof u.id === "number" && u.id >= 0);
         return { ...note, uploads: [...realMapped, ...nonTempExisting] };
       })
     );
@@ -1210,14 +1329,14 @@ export default function App() {
     if (!authToken || !selectedNote) return;
     const input = window.prompt(t("app.addLinkPrompt"), "https://");
     if (!input) return;
-    const created = await addLink(authToken, selectedNote.id, input, input.replace(/^https?:\/\//, ""));
+    const created = await addLink(authToken, selectedNote.id as any, input, input.replace(/^https?:\/\//, ""));
     updateCurrentNote({ uploads: [mapFileToUpload(created, noteLabels.justNow), ...selectedNote.uploads] });
   };
 
-  const handleRemoveUpload = async (fileId: number) => {
+  const handleRemoveUpload = async (fileId: string | number) => {
     if (!authToken || !selectedNote) return;
     try {
-      await removeFile(authToken, fileId);
+      await removeFile(authToken, fileId as any);
       setNotes((prev) =>
         prev.map((note) =>
           note.id === selectedNote.id
@@ -1399,7 +1518,7 @@ export default function App() {
       role: "user",
       content: prompt,
     };
-    setChatMessagesByNote((prev) => ({
+    setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
       ...prev,
       [selectedNote.id]: [...(prev[selectedNote.id] ?? []), userMessage],
     }));
@@ -1407,13 +1526,13 @@ export default function App() {
     const assistantMessageId = `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     // Insert the bubble immediately with "thinking" status so the user sees
     // acknowledgement before the first token arrives.
-    setChatMessagesByNote((prev) => ({
+    setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
       ...prev,
       [selectedNote.id]: [
         ...(prev[selectedNote.id] ?? []),
         {
           id: assistantMessageId,
-          role: "assistant",
+          role: "assistant" as const,
           content: "",
           status: "thinking" as const,
         },
@@ -1425,7 +1544,7 @@ export default function App() {
     // Instantiate the character-by-character typewriter loop
     const streamer = new SmoothStreamer(
       (text) => {
-        setChatMessagesByNote((prev) => ({
+        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) => {
             if (message.id !== assistantMessageId) return message;
@@ -1437,7 +1556,7 @@ export default function App() {
       },
       () => {
         // Drained and fully typed
-        setChatMessagesByNote((prev) => ({
+        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
             message.id === assistantMessageId
@@ -1449,7 +1568,7 @@ export default function App() {
     );
 
     try {
-      const streamed = await streamAIChat(authToken, selectedNote.id, prompt, aiProvider, {
+      const streamed = await streamAIChat(authToken, selectedNote.id as any, prompt, aiProvider, {
         onDelta: (chunk) => {
           streamer.enqueue(chunk);
         },
@@ -1457,7 +1576,7 @@ export default function App() {
 
       if (streamed.cached) {
         streamer.destroy();
-        setChatMessagesByNote((prev) => ({
+        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
             message.id === assistantMessageId
@@ -1471,8 +1590,8 @@ export default function App() {
     } catch (streamError) {
       streamer.destroy();
       try {
-        const fallback = await chatWithAIHttp(authToken, selectedNote.id, prompt, aiProvider);
-        setChatMessagesByNote((prev) => ({
+        const fallback = await chatWithAIHttp(authToken, selectedNote.id as any, prompt, aiProvider);
+        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
             message.id === assistantMessageId
@@ -1816,6 +1935,7 @@ export default function App() {
                 onAppleAuth={handleAppleAuth}
                 onForgotPassword={handleForgotPassword}
                 onResetPassword={handleResetPassword}
+                onContinueOffline={() => void finalizeAuth("local-offline-session-token")}
               />
             </PublicRoute>
           )}
@@ -1833,6 +1953,7 @@ export default function App() {
                 onAppleAuth={handleAppleAuth}
                 onForgotPassword={handleForgotPassword}
                 onResetPassword={handleResetPassword}
+                onContinueOffline={() => void finalizeAuth("local-offline-session-token")}
               />
             </PublicRoute>
           )}
@@ -1914,7 +2035,18 @@ export default function App() {
                     onLanguageChange={handleLanguageChange}
                     onLogout={handleLogout}
                     onNoteRestored={(restoredNote) => {
-                      setNotes((prev) => [mapNoteToHomeNote(restoredNote, noteLabels), ...prev]);
+                      const homeNote: HomeNote = {
+                        id: restoredNote.id,
+                        title: restoredNote.title,
+                        cardTitle: buildHomeCardTitle(restoredNote.title, restoredNote.body, noteLabels.untitled),
+                        body: restoredNote.body,
+                        tag: restoredNote.tags[0]?.name ?? noteLabels.untagged,
+                        pinned: restoredNote.is_pinned,
+                        updatedAt: formatDisplayDate(restoredNote.updated_at),
+                        updatedAtIso: restoredNote.updated_at,
+                        uploads: restoredNote.files as any,
+                      };
+                      setNotes((prev) => [homeNote, ...prev]);
                       setTrashedNoteCount((prev) => Math.max(0, prev - 1));
                     }}
                   />

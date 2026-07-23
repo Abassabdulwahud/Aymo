@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
+import { WorkspaceGate } from "./components/WorkspaceGate";
 import { I18nProvider } from "./i18n";
 
 const rootElement = document.getElementById("root");
@@ -17,7 +18,9 @@ try {
       <BrowserRouter>
         <I18nProvider>
           <AppErrorBoundary>
-            <App />
+            <WorkspaceGate>
+              <App />
+            </WorkspaceGate>
           </AppErrorBoundary>
         </I18nProvider>
       </BrowserRouter>

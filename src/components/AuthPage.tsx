@@ -1,4 +1,4 @@
-﻿import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { AuthDivider } from "./AuthDivider";
 import { useNavigate } from "react-router-dom";
 import { AuthHeader } from "./AuthHeader";
@@ -99,6 +99,7 @@ interface AuthPageProps {
   onAppleAuth: (oauthToken: string) => Promise<void>;
   onForgotPassword: (email: string) => Promise<void>;
   onResetPassword: (token: string, newPassword: string) => Promise<void>;
+  onContinueOffline?: () => void;
 }
 
 export function AuthPage({
@@ -110,6 +111,7 @@ export function AuthPage({
   onAppleAuth,
   onForgotPassword,
   onResetPassword,
+  onContinueOffline,
 }: AuthPageProps) {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -397,6 +399,19 @@ export function AuthPage({
               appleEnabled={Boolean(providers?.apple.enabled)}
               appleStatus={appleStatus}
             />
+
+            {onContinueOffline ? (
+              <div style={{ marginTop: "16px", display: "flex", justifyContent: "center" }}>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: "none", color: "var(--foreground)", fontSize: "14px", fontWeight: 500 }}
+                  onClick={onContinueOffline}
+                >
+                  Continue Offline (Local Mode)
+                </button>
+              </div>
+            ) : null}
           </>
         ) : null}
 

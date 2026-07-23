@@ -16,7 +16,7 @@ interface BackendPreferencesResponse {
 }
 
 export async function loadPreferences(token?: string | null): Promise<UserPreferences> {
-  if (!token) {
+  if (!token || token === "local-offline-session-token") {
     return loadLocal();
   }
 
@@ -48,7 +48,7 @@ export async function savePreferences(
   const nextPreferences = { ...loadLocal(), ...patch };
   persistLocal(nextPreferences);
 
-  if (!token) {
+  if (!token || token === "local-offline-session-token") {
     return nextPreferences;
   }
 

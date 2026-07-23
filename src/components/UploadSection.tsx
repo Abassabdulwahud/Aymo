@@ -1,4 +1,4 @@
-﻿import { ChangeEvent, DragEvent, useState } from "react";
+import { ChangeEvent, DragEvent, useState } from "react";
 import { FileCard } from "./FileCard";
 import { UploadedItem } from "../types";
 
@@ -6,7 +6,7 @@ interface UploadSectionProps {
   uploads: UploadedItem[];
   onFileUpload: (files: FileList | null) => void;
   onAddLink: () => void;
-  onRemoveUpload: (id: number) => void;
+  onRemoveUpload: (id: string | number) => void;
 }
 
 export function UploadSection({ uploads, onFileUpload, onAddLink, onRemoveUpload }: UploadSectionProps) {

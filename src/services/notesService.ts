@@ -24,7 +24,7 @@ export interface BackendFile {
 }
 
 export interface BackendNote {
-  id: number;
+  id: string | number;
   user_id: number;
   title: string;
   body: string;

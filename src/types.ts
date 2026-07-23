@@ -3,7 +3,7 @@ export type UploadKind = "image" | "pdf" | "document" | "video" | "audio" | "lin
 export type AIProvider = "gemini" | "openai" | "deepseek" | "anthropic" | "groq" | "cohere";
 
 export interface UploadedItem {
-  id: number;
+  id: string | number;
   name: string;
   kind: UploadKind;
   sizeLabel: string;
@@ -65,10 +65,10 @@ export interface BoundingRect {
 }
 
 export interface Annotation {
-  id: number;
-  user_id: number;
+  id: string | number;
+  user_id: string | number;
   source_type: AnnotationSourceType;
-  source_id: number;
+  source_id: string | number;
   page_number: number | null;
   selected_text: string;
   bounding_rects: BoundingRect[] | null;
@@ -77,7 +77,7 @@ export interface Annotation {
   color: string;
   annotation_type: AnnotationType;
   comment: string | null;
-  linked_note_id: number | null;
+  linked_note_id: string | number | null;
   created_at: string;
   updated_at: string;
 }

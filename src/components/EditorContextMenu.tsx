@@ -97,7 +97,7 @@ interface EditorContextMenuProps {
   onClose: () => void;
   onAction: (actionId: string, payload?: any) => void;
   selectedText: string;
-  notes: Array<{ id: number; title: string; cardTitle: string }>;
+  notes: Array<{ id: string | number; title: string; cardTitle: string }>;
 }
 
 export function EditorContextMenu({
@@ -391,8 +391,8 @@ function LinkedNoteSubmenu({
   notes,
   onPick,
 }: {
-  notes: Array<{ id: number; title: string; cardTitle: string }>;
-  onPick: (note: { id: number; title: string; cardTitle: string }) => void;
+  notes: Array<{ id: string | number; title: string; cardTitle: string }>;
+  onPick: (note: { id: string | number; title: string; cardTitle: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement | null>(null);

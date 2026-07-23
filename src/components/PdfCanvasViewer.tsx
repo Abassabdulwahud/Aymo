@@ -13,16 +13,16 @@ GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface PdfCanvasViewerProps {
   source: string;
-  sourceId: number;
+  sourceId: string | number;
   annotations: Annotation[];
-  flashAnnotationId?: number | null;
+  flashAnnotationId?: string | number | null;
   jumpToPage?: number | null;
   onAnnotationCreate: (
     pageIndex: number,
     selectedText: string,
     rects: BoundingRect[],
     action: SelectionMenuAction,
-    sourceId: number,
+    sourceId: string | number,
   ) => void;
   onAskAI: (prompt: string) => void;
   onCopyText: (text: string, withCitation?: boolean, pageNumber?: number) => void;

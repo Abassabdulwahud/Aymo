@@ -21,23 +21,23 @@ interface NoteSidePanelProps {
   onTabChange: (tab: RightTab) => void;
   onFileUpload: (files: FileList | null) => void;
   onAddLink: () => void;
-  onRemoveUpload: (id: number) => Promise<void> | void;
+  onRemoveUpload: (id: string | number) => Promise<void> | void;
   // Annotation system additions
-  selectedNoteId: number;
+  selectedNoteId: string | number;
   annotations: Annotation[];
-  flashAnnotationId: number | null;
+  flashAnnotationId: string | number | null;
   jumpToPage: number | null;
   onAnnotationCreate: (
     pageIndex: number,
     selectedText: string,
     rects: BoundingRect[],
     action: SelectionMenuAction,
-    sourceId: number,
+    sourceId: string | number,
   ) => void;
   onJumpToPage: (pageIndex: number | null) => void;
-  onFlash: (id: number | null) => void;
-  onDeleteAnnotation: (id: number) => void;
-  onUpdateAnnotationComment: (id: number, comment: string) => void;
+  onFlash: (id: string | number | null) => void;
+  onDeleteAnnotation: (id: string | number) => void;
+  onUpdateAnnotationComment: (id: string | number, comment: string) => void;
   onCreateNoteFromAnnotation: (text: string, pageNumber: number) => void;
   onAppendNoteFromAnnotation: (text: string, pageNumber: number) => void;
   onAskAI: (prompt: string) => void;
@@ -97,14 +97,14 @@ export function NoteSidePanel({
   onSearchGoogle,
 }: NoteSidePanelProps) {
   const { t } = useI18n();
-  const [selectedUploadId, setSelectedUploadId] = useState<number | null>(uploads[0]?.id ?? null);
+  const [selectedUploadId, setSelectedUploadId] = useState<string | number | null>(uploads[0]?.id ?? null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({});
+  const [expandedSteps, setExpandedSteps] = useState<Record<string | number, boolean>>({});
   const [showAnnotationsPanel, setShowAnnotationsPanel] = useState(false);
 
-  const toggleStepsExpanded = (id: number) => {
+  const toggleStepsExpanded = (id: string | number) => {
     setExpandedSteps((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 

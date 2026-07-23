@@ -4845,6 +4845,204 @@ body.page-note-view .theme-root.theme-dark ::selection {
   background: #d32f2f;
 }
 
+.workspace-gate-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background:
+    linear-gradient(135deg, rgba(38, 89, 84, 0.08), rgba(166, 125, 74, 0.08)),
+    var(--bg);
+  color: var(--text);
+}
+
+.workspace-gate-panel {
+  width: min(720px, 100%);
+  display: grid;
+  gap: 20px;
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.workspace-gate-panel.compact {
+  width: min(360px, 100%);
+  place-items: center;
+  text-align: center;
+}
+
+.workspace-gate-panel h1 {
+  max-width: 620px;
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.workspace-gate-panel p {
+  max-width: 580px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.workspace-gate-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.workspace-eyebrow,
+.workspace-health-kicker {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.workspace-health-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
+}
+
+.workspace-health-card.warning {
+  border-color: rgba(184, 122, 40, 0.55);
+}
+
+.workspace-health-card.critical,
+.workspace-health-card.unavailable {
+  border-color: rgba(185, 60, 60, 0.58);
+}
+
+.workspace-health-card strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1.05rem;
+}
+
+.workspace-health-card ul {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.workspace-health-card li {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.workspace-list {
+  display: grid;
+  gap: 10px;
+}
+
+.workspace-list-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-list-item:hover {
+  border-color: var(--accent);
+}
+
+.workspace-list-item span {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.workspace-create-form {
+  display: grid;
+  gap: 10px;
+}
+
+.workspace-create-form label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.workspace-create-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.workspace-create-row input {
+  min-width: 0;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.workspace-create-row input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.workspace-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.workspace-error {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .workspace-gate-shell {
+    padding: 18px;
+  }
+
+  .workspace-gate-panel {
+    padding: 22px;
+  }
+
+  .workspace-health-card ul,
+  .workspace-create-row {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-list-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
 
 
 

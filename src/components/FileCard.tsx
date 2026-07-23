@@ -1,13 +1,13 @@
 import { UploadKind } from "../types";
 
 interface FileCardProps {
-  id: number;
+  id: string | number;
   name: string;
   kind: UploadKind;
   sizeLabel: string;
   addedAt: string;
   source?: string;
-  onRemove?: (id: number) => void;
+  onRemove?: (id: string | number) => void;
 }
 
 const KIND_LABEL: Record<UploadKind, string> = {
