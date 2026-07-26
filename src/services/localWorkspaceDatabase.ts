@@ -7,7 +7,7 @@ export interface LocalWorkspace {
 }
 
 const DATABASE_NAME = "aymo_local";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const ACTIVE_WORKSPACE_KEY = "activeWorkspaceId";
 const ACTIVE_WORKSPACE_STORAGE_KEY = "aymo.activeWorkspaceId";
 
@@ -24,7 +24,8 @@ type StoreName =
   | "syncQueue"
   | "remoteMappings"
   | "tombstones"
-  | "conflicts";
+  | "conflicts"
+  | "syncState";
 
 interface MetadataRecord {
   key: string;
@@ -53,7 +54,8 @@ function createObjectStore(database: IDBDatabase, name: StoreName, options?: IDB
   return database.createObjectStore(name, options);
 }
 
-function ensureSchema(database: IDBDatabase): void {
+function ensureSchema(database: IDBDatabase, upgradeTransaction: IDBTransaction): void {
+  // ── Existing top-level stores ──────────────────────────────────────────
   const workspaces = createObjectStore(database, "workspaces", { keyPath: "id" });
   if (!workspaces.indexNames.contains("updatedAt")) {
     workspaces.createIndex("updatedAt", "updatedAt");
@@ -61,6 +63,7 @@ function ensureSchema(database: IDBDatabase): void {
 
   createObjectStore(database, "workspaceMetadata", { keyPath: "key" });
 
+  // ── Workspace-scoped stores with workspaceId index ─────────────────────
   const workspaceScopedStores: StoreName[] = [
     "notes",
     "tags",
@@ -81,6 +84,38 @@ function ensureSchema(database: IDBDatabase): void {
       store.createIndex("workspaceId", "workspaceId");
     }
   }
+
+  // ── v2: syncState store (workspace-level sync metadata) ───────────────
+  // keyPath is workspaceId so each workspace has exactly one record.
+  if (!database.objectStoreNames.contains("syncState")) {
+    database.createObjectStore("syncState", { keyPath: "workspaceId" });
+  }
+
+  // ── v2: extra indexes on syncQueue for efficient queue polling ─────────
+  // We must use the upgrade transaction to access an already-existing store.
+  if (database.objectStoreNames.contains("syncQueue")) {
+    const sq = upgradeTransaction.objectStore("syncQueue");
+    if (!sq.indexNames.contains("status")) {
+      sq.createIndex("status", "status");
+    }
+    if (!sq.indexNames.contains("workspaceId_status")) {
+      sq.createIndex("workspaceId_status", ["workspaceId", "status"]);
+    }
+    if (!sq.indexNames.contains("createdAt")) {
+      sq.createIndex("createdAt", "createdAt");
+    }
+  }
+
+  // ── v2: localId index on remoteMappings for reverse lookups ───────────
+  if (database.objectStoreNames.contains("remoteMappings")) {
+    const rm = upgradeTransaction.objectStore("remoteMappings");
+    if (!rm.indexNames.contains("localId")) {
+      rm.createIndex("localId", "localId");
+    }
+    if (!rm.indexNames.contains("remoteId")) {
+      rm.createIndex("remoteId", "remoteId");
+    }
+  }
 }
 
 export function openLocalWorkspaceDatabase(): Promise<IDBDatabase> {
@@ -96,8 +131,9 @@ export function openLocalWorkspaceDatabase(): Promise<IDBDatabase> {
 
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
 
-    request.onupgradeneeded = () => {
-      ensureSchema(request.result);
+    request.onupgradeneeded = (event) => {
+      const upgradeTransaction = (event.target as IDBOpenDBRequest).transaction!;
+      ensureSchema(request.result, upgradeTransaction);
     };
 
     request.onsuccess = () => {
