@@ -58,6 +58,7 @@ import {
   getActiveWorkspaceId,
   generateUuid,
 } from "./services/localWorkspaceDatabase";
+import { WorkspaceHealthPanel } from "./components/WorkspaceHealthPanel";
 
 
 interface HomeNote {
@@ -738,6 +739,10 @@ export default function App() {
       if (!authToken || !selectedNote) {
         return;
       }
+      // Local-offline sessions have no cloud AI history — skip the backend call.
+      if (authToken === "local-offline-session-token") {
+        return;
+      }
       if (chatMessagesByNote[selectedNote.id]) {
         return;
       }
@@ -769,6 +774,8 @@ export default function App() {
   // Fetch annotations when active note or its files change
   useEffect(() => {
     if (!authToken || !selectedNote) return;
+    // Local-offline sessions have no cloud annotations — skip the backend call.
+    if (authToken === "local-offline-session-token") return;
 
     let active = true;
     const fetchAllAnnotations = async () => {
@@ -1513,6 +1520,32 @@ export default function App() {
 
   const handleAssistantPrompt = async (prompt: string) => {
     if (!selectedNote || !authToken) return;
+
+    // ── Local-offline guard ────────────────────────────────────────────────
+    // Never send the offline sentinel token to the backend.
+    // Display a friendly message in the chat instead.
+    if (authToken === "local-offline-session-token") {
+      const offlineUserId = `user-${Date.now()}`;
+      const offlineAssistId = `assistant-offline-${Date.now()}`;
+      setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
+        ...prev,
+        [selectedNote.id]: [
+          ...(prev[selectedNote.id] ?? []),
+          { id: offlineUserId, role: "user" as const, content: prompt } satisfies ChatMessage,
+          {
+            id: offlineAssistId,
+            role: "assistant" as const,
+            content:
+              "AI assistant requires a signed-in cloud account. " +
+              "Your notes are saved locally and work fully offline — " +
+              "AI chat will be available once you sign in and enable cloud sync.",
+            status: "done" as const,
+          } satisfies ChatMessage,
+        ],
+      }));
+      return;
+    }
+    // ── End local-offline guard ───────────────────────────────────────────
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       role: "user",
@@ -1822,6 +1855,10 @@ export default function App() {
           <span>Trash</span>
           <span>{trashedNoteCount > 0 ? `(${trashedNoteCount})` : ""}</span>
         </button>
+
+        <div className="sidebar-health-footer">
+          <WorkspaceHealthPanel isLocalSession={authToken === "local-offline-session-token"} />
+        </div>
       </aside>
 
       <section className="home-main">

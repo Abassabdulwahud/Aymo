@@ -5044,5 +5044,123 @@ body.page-note-view .theme-root.theme-dark ::selection {
   }
 }
 
+/* ── Sidebar Health Footer ─────────────────────────────────────────────────── */
 
+.sidebar-health-footer {
+  margin-top: auto;
+  padding: 12px 8px 8px;
+}
 
+/* ── Workspace Health Panel (in-app sidebar widget) ──────────────────────── */
+
+.ws-health-panel {
+  background: var(--soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: var(--muted);
+  transition: border-color 0.2s;
+}
+
+.ws-health-panel--warning {
+  border-color: #e8b84b44;
+}
+
+.ws-health-panel--critical {
+  border-color: #e5534b55;
+}
+
+.ws-health-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.ws-health-panel__title {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+/* Status badges */
+.ws-health-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 20px;
+  letter-spacing: 0.04em;
+}
+
+.ws-health-badge--healthy  { background: #22c55e22; color: #16a34a; }
+.ws-health-badge--warning  { background: #f59e0b22; color: #b45309; }
+.ws-health-badge--critical { background: #ef444422; color: #dc2626; }
+.ws-health-badge--unavailable { background: var(--interactive); color: var(--muted); }
+.ws-health-badge--loading  { background: var(--interactive); color: var(--muted); }
+
+.theme-dark .ws-health-badge--healthy  { color: #4ade80; }
+.theme-dark .ws-health-badge--warning  { color: #fbbf24; }
+.theme-dark .ws-health-badge--critical { color: #f87171; }
+
+/* Stat rows */
+.ws-health-panel__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ws-health-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.ws-health-row__label {
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.ws-health-row__value {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: right;
+  word-break: break-all;
+}
+
+.ws-health-row__value--muted {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* Enable persistence button */
+.ws-health-panel__persist-btn {
+  margin-top: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--interactive);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ws-health-panel__persist-btn:hover:not(:disabled) {
+  background: var(--interactive-hover);
+}
+
+.ws-health-panel__persist-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
