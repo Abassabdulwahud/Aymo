@@ -53,11 +53,16 @@ import {
   LocalNote,
   listLocalNotes,
   getLocalNote,
-  putLocalNote,
-  deleteLocalNotePermanently,
   getActiveWorkspaceId,
-  generateUuid,
 } from "./services/localWorkspaceDatabase";
+import {
+  createNote as lnsCreateNote,
+  updateNote as lnsUpdateNote,
+  trashNote as lnsTrashNote,
+  duplicateNote as lnsDuplicateNote,
+  toggleNotePin as lnsToggleNotePin,
+  permanentlyDeleteNote as lnsPermanentlyDeleteNote,
+} from "./services/localNotesService";
 import { WorkspaceHealthPanel } from "./components/WorkspaceHealthPanel";
 
 
@@ -875,28 +880,17 @@ export default function App() {
       const workspaceId = await getActiveWorkspaceId();
       if (!workspaceId) return;
 
-      const now = new Date().toISOString();
-      const localNote: LocalNote = {
-        id: generateUuid(),
-        workspaceId,
+      const localNote = await lnsCreateNote(workspaceId, {
         title: `Highlight from PDF Page ${pageNumber}`,
         body: text,
         isPinned: false,
         isFavorited: false,
-        createdAt: now,
-        updatedAt: now,
         deletedAt: null,
         tags: [],
         files: [],
-      };
-
-      await putLocalNote(localNote);
+      });
       const mapped = mapLocalNoteToHomeNote(localNote, noteLabels);
-      
-      lastSyncedRef.current[mapped.id] = {
-        title: mapped.title,
-        body: mapped.body,
-      };
+      lastSyncedRef.current[mapped.id] = { title: mapped.title, body: mapped.body };
       setNotes((prev) => [mapped, ...prev]);
       setSelectedId(mapped.id);
       navigate(`/notes/${mapped.id}`);
@@ -911,11 +905,11 @@ export default function App() {
       const localNote = await getLocalNote(String(selectedNote.id));
       if (!localNote) return;
 
-      localNote.body = `${localNote.body}\n\n> ${text} (Page ${pageNumber})`;
-      localNote.updatedAt = new Date().toISOString();
-      await putLocalNote(localNote);
-
-      replaceNote(mapLocalNoteToHomeNote(localNote, noteLabels));
+      const updated = await lnsUpdateNote({
+        ...localNote,
+        body: `${localNote.body}\n\n> ${text} (Page ${pageNumber})`,
+      });
+      replaceNote(mapLocalNoteToHomeNote(updated, noteLabels));
     } catch (e) {
       console.error("Failed to append highlight to note", e);
     }
@@ -1067,28 +1061,17 @@ export default function App() {
       const workspaceId = await getActiveWorkspaceId();
       if (!workspaceId) throw new Error("No active workspace found.");
 
-      const now = new Date().toISOString();
-      const localNote: LocalNote = {
-        id: generateUuid(),
-        workspaceId,
+      const localNote = await lnsCreateNote(workspaceId, {
         title: "",
         body: "",
         isPinned: false,
         isFavorited: false,
-        createdAt: now,
-        updatedAt: now,
         deletedAt: null,
         tags: [],
         files: [],
-      };
-
-      await putLocalNote(localNote);
+      });
       const created = mapLocalNoteToHomeNote(localNote, noteLabels);
-      
-      lastSyncedRef.current[created.id] = {
-        title: created.title,
-        body: created.body,
-      };
+      lastSyncedRef.current[created.id] = { title: created.title, body: created.body };
       setSearch("");
       setActiveTag("all");
       setNotes((prev) => [created, ...prev]);
@@ -1108,10 +1091,7 @@ export default function App() {
       const localNote = await getLocalNote(String(id));
       if (!localNote) return;
 
-      // Soft delete: move to trash
-      localNote.deletedAt = new Date().toISOString();
-      localNote.updatedAt = new Date().toISOString();
-      await putLocalNote(localNote);
+      await lnsTrashNote(localNote);
 
       let nextSelectedId: string | number | null = null;
       setNotes((prev) => {
@@ -1134,16 +1114,11 @@ export default function App() {
   const togglePin = async (id: string | number) => {
     const existing = notes.find((note) => note.id === id);
     if (!existing) return;
-
     try {
       const localNote = await getLocalNote(String(id));
       if (!localNote) return;
-
-      localNote.isPinned = !localNote.isPinned;
-      localNote.updatedAt = new Date().toISOString();
-      await putLocalNote(localNote);
-
-      replaceNote(mapLocalNoteToHomeNote(localNote, noteLabels));
+      const updated = await lnsToggleNotePin(localNote);
+      replaceNote(mapLocalNoteToHomeNote(updated, noteLabels));
       setOpenNoteMenuId(null);
     } catch (error) {
       console.error("Failed to pin/unpin note", error);
@@ -1164,21 +1139,15 @@ export default function App() {
   const renameNote = async (id: string | number) => {
     const existing = notes.find((note) => note.id === id);
     if (!existing) return;
-
     const nextTitle = window.prompt("Rename note", existing.title || existing.cardTitle);
     if (nextTitle === null) return;
     const trimmedTitle = nextTitle.trim();
     if (!trimmedTitle) return;
-
     try {
       const localNote = await getLocalNote(String(id));
       if (!localNote) return;
-
-      localNote.title = trimmedTitle;
-      localNote.updatedAt = new Date().toISOString();
-      await putLocalNote(localNote);
-
-      replaceNote(mapLocalNoteToHomeNote(localNote, noteLabels));
+      const updated = await lnsUpdateNote({ ...localNote, title: trimmedTitle }, "rename");
+      replaceNote(mapLocalNoteToHomeNote(updated, noteLabels));
       setOpenNoteMenuId(null);
     } catch (error) {
       setHomeError(error instanceof Error ? error.message : "Could not rename note.");
@@ -1188,33 +1157,12 @@ export default function App() {
   const duplicateNote = async (id: string | number) => {
     const existing = notes.find((note) => note.id === id);
     if (!existing) return;
-
     try {
-      const workspaceId = await getActiveWorkspaceId();
-      if (!workspaceId) throw new Error("No active workspace found.");
-
-      const now = new Date().toISOString();
-      const localNote: LocalNote = {
-        id: generateUuid(),
-        workspaceId,
-        title: `${existing.cardTitle} copy`,
-        body: existing.body,
-        isPinned: existing.pinned,
-        isFavorited: false,
-        createdAt: now,
-        updatedAt: now,
-        deletedAt: null,
-        tags: existing.tag && existing.tag !== t("app.noteUntagged") ? [existing.tag] : [],
-        files: [],
-      };
-
-      await putLocalNote(localNote);
-      const duplicated = mapLocalNoteToHomeNote(localNote, noteLabels);
-
-      lastSyncedRef.current[duplicated.id] = {
-        title: duplicated.title,
-        body: duplicated.body,
-      };
+      const localNote = await getLocalNote(String(id));
+      if (!localNote) return;
+      const copy = await lnsDuplicateNote(localNote);
+      const duplicated = mapLocalNoteToHomeNote(copy, noteLabels);
+      lastSyncedRef.current[duplicated.id] = { title: duplicated.title, body: duplicated.body };
       setNotes((prev) => [duplicated, ...prev]);
       setOpenNoteMenuId(null);
       openNote(duplicated.id);
@@ -1238,13 +1186,12 @@ export default function App() {
     try {
       const localNote = await getLocalNote(String(selectedNote.id));
       if (!localNote) return;
-
-      localNote.title = selectedNote.title;
-      localNote.body = selectedNote.body;
-      localNote.isPinned = selectedNote.pinned;
-      localNote.updatedAt = new Date().toISOString();
-      await putLocalNote(localNote);
-
+      await lnsUpdateNote({
+        ...localNote,
+        title: selectedNote.title,
+        body: selectedNote.body,
+        isPinned: selectedNote.pinned,
+      });
       lastSyncedRef.current[selectedNote.id] = {
         title: selectedNote.title,
         body: selectedNote.body,

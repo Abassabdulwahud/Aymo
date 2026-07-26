@@ -7,10 +7,12 @@ import {
   LocalNote,
   listLocalNotes,
   getLocalNote,
-  putLocalNote,
-  deleteLocalNotePermanently,
   getActiveWorkspaceId,
 } from "../services/localWorkspaceDatabase";
+import {
+  restoreNote as lnsRestoreNote,
+  permanentlyDeleteNote as lnsPermanentlyDeleteNote,
+} from "../services/localNotesService";
 
 import { LanguageCode } from "../i18n";
 
@@ -93,11 +95,9 @@ export const TrashPage: React.FC<TrashPageProps> = ({
     try {
       const localNote = await getLocalNote(String(noteId));
       if (!localNote) return;
-      localNote.deletedAt = null;
-      localNote.updatedAt = new Date().toISOString();
-      await putLocalNote(localNote);
+      const restored = await lnsRestoreNote(localNote);
       setTrashedNotes((prev) => prev.filter((n) => n.id !== noteId));
-      onNoteRestored(mapLocalNoteToBackendNote(localNote));
+      onNoteRestored(mapLocalNoteToBackendNote(restored));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to restore note.");
     }
@@ -107,14 +107,15 @@ export const TrashPage: React.FC<TrashPageProps> = ({
     if (!confirmTarget) return;
     try {
       if (confirmTarget.type === "single" && confirmTarget.noteId !== undefined) {
-        await deleteLocalNotePermanently(String(confirmTarget.noteId));
+        const localNote = await getLocalNote(String(confirmTarget.noteId));
+        if (localNote) await lnsPermanentlyDeleteNote(localNote);
         setTrashedNotes((prev) => prev.filter((n) => n.id !== confirmTarget.noteId));
       } else if (confirmTarget.type === "all") {
         const workspaceId = await getActiveWorkspaceId();
         if (workspaceId) {
           const localNotes = await listLocalNotes(workspaceId, true);
           for (const note of localNotes) {
-            await deleteLocalNotePermanently(note.id);
+            await lnsPermanentlyDeleteNote(note);
           }
         }
         setTrashedNotes([]);

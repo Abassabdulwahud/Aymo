@@ -85,10 +85,11 @@ export async function createNote(
 export async function updateNote(
   note: LocalNote,
   operation: Extract<SyncOperation, "update" | "rename"> = "update",
-): Promise<void> {
+): Promise<LocalNote> {
   const updated: LocalNote = { ...note, updatedAt: new Date().toISOString() };
   await putLocalNote(updated);
   void enqueueQuietly(note.workspaceId, operation, note.id, noteToPayload(updated));
+  return updated;
 }
 
 // ─── Soft Delete (Trash) ──────────────────────────────────────────────────────
