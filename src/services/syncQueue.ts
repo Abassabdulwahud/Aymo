@@ -339,3 +339,203 @@ export function computeSyncStatus(params: {
   if (params.stats.pending > 0 || params.stats.failed > 0) return "pending_changes";
   return "synced";
 }
+
+// ─── Task 5: Crash Recovery ───────────────────────────────────────────────────
+
+/**
+ * Resets all "processing" records back to "pending".
+ *
+ * CRITICAL: Call this in SyncService.initialize() on every startup.
+ *
+ * If the browser closes while a record is being pushed to the cloud, that
+ * record is left permanently in "processing" state. getPendingOperations()
+ * only returns "pending" and "failed" — so without this recovery step, those
+ * records would be stuck forever and never reach the cloud.
+ *
+ * This is safe: "processing" records have not been confirmed by the cloud,
+ * so treating them as "pending" and re-pushing them is idempotent as long as
+ * the MongoDB adapter uses upsert semantics (which it must).
+ *
+ * @returns Number of records recovered.
+ */
+export async function recoverStuckOperations(workspaceId: string): Promise<number> {
+  const db = await openLocalWorkspaceDatabase();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("syncQueue", "readwrite");
+    const store = tx.objectStore("syncQueue");
+    const index = store.index("workspaceId_status");
+
+    // Query records with status "processing" for this workspace.
+    const range = IDBKeyRange.only([workspaceId, "processing"]);
+    const req = index.openCursor(range);
+    const now = new Date().toISOString();
+    let count = 0;
+
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (cursor) {
+        const record = cursor.value as SyncQueueRecord;
+        cursor.update({
+          ...record,
+          status: "pending",
+          updatedAt: now,
+          // Note: we do NOT reset retryCount here — if this was a genuine
+          // retry that crashed mid-flight, it already consumed an attempt.
+        } satisfies SyncQueueRecord);
+        count += 1;
+        cursor.continue();
+      }
+    };
+
+    tx.oncomplete = () => resolve(count);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ─── Task 1: Queue Compaction ─────────────────────────────────────────────────
+
+/**
+ * Collapses redundant "update" operations for the same entity into a single
+ * record before a sync pass begins.
+ *
+ * RULES (strictly enforced):
+ *   ✓ Only "pending" records are considered.
+ *   ✓ Only "update" operations are compacted.
+ *   ✓ create / delete / restore / rename / move / duplicate are NEVER compacted.
+ *   ✓ An entity is only compacted when ALL its pending operations are "update".
+ *     (If there's a pending delete, rename, or create, that entity is skipped.)
+ *   ✓ The newest "update" record (by createdAt) is kept.
+ *   ✓ The ordering of other entities in the queue is unaffected.
+ *
+ * WHY "all-updates" gate?
+ *   Consider: update-1, restore, update-2 for the same note.
+ *   Compacting update-1 and update-2 would remove history before the restore.
+ *   The safe invariant: only compact when the complete pending history for an
+ *   entity consists solely of updates (i.e., the note's state has been
+ *   monotonically modified with no lifecycle events in between).
+ *
+ * @returns Number of redundant records removed.
+ */
+export async function compactQueue(workspaceId: string): Promise<number> {
+  const all = await getAllQueueRecords(workspaceId);
+
+  // Only consider "pending" records — do not touch failed/processing/synced/conflict.
+  const pending = all.filter((r) => r.status === "pending");
+
+  if (pending.length === 0) return 0;
+
+  // Group pending records by localId.
+  const byLocalId = new Map<string, SyncQueueRecord[]>();
+  for (const record of pending) {
+    const group = byLocalId.get(record.localId) ?? [];
+    group.push(record);
+    byLocalId.set(record.localId, group);
+  }
+
+  const toDelete: string[] = [];
+
+  for (const [, records] of byLocalId) {
+    // Must have more than one record to compact.
+    if (records.length <= 1) continue;
+
+    // All pending operations for this entity must be "update".
+    // If there's a create, delete, restore, rename, etc., skip this entity.
+    const allUpdates = records.every((r) => r.operation === "update");
+    if (!allUpdates) continue;
+
+    // Sort by createdAt ascending so the LAST element is the newest.
+    records.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+    // Keep the newest (index length-1), mark all others for deletion.
+    for (let i = 0; i < records.length - 1; i++) {
+      toDelete.push(records[i].id);
+    }
+  }
+
+  if (toDelete.length === 0) return 0;
+
+  const db = await openLocalWorkspaceDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("syncQueue", "readwrite");
+    const store = tx.objectStore("syncQueue");
+    for (const id of toDelete) store.delete(id);
+    tx.oncomplete = () => resolve(toDelete.length);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ─── Task 3: Queue Integrity Report ──────────────────────────────────────────
+
+export interface QueueIntegrityReport {
+  workspaceId: string;
+  checkedAt: string;
+  /** Any "processing" records found — should always be 0 after initialize(). */
+  stuckProcessing: number;
+  /** Duplicate "update" records for the same localId (compactable). */
+  compactableUpdates: number;
+  /** Total pending + failed records awaiting sync. */
+  awaitingSync: number;
+  /** Any "conflict" records requiring manual resolution. */
+  conflicts: number;
+  /** Overall assessment. */
+  healthy: boolean;
+  notes: string[];
+}
+
+/**
+ * Performs a non-destructive health check of the sync queue for a workspace.
+ * Returns a structured report that can be surfaced in the Workspace Health panel.
+ *
+ * Does NOT modify any records.
+ */
+export async function checkQueueIntegrity(workspaceId: string): Promise<QueueIntegrityReport> {
+  const all = await getAllQueueRecords(workspaceId);
+  const notes: string[] = [];
+
+  const stuckProcessing = all.filter((r) => r.status === "processing").length;
+  if (stuckProcessing > 0) {
+    notes.push(`${stuckProcessing} record(s) stuck in "processing" — call recoverStuckOperations() to fix.`);
+  }
+
+  // Count compactable duplicates.
+  const pending = all.filter((r) => r.status === "pending");
+  const byLocalId = new Map<string, SyncQueueRecord[]>();
+  for (const r of pending) {
+    const g = byLocalId.get(r.localId) ?? [];
+    g.push(r);
+    byLocalId.set(r.localId, g);
+  }
+  let compactableUpdates = 0;
+  for (const [, records] of byLocalId) {
+    if (records.length > 1 && records.every((r) => r.operation === "update")) {
+      compactableUpdates += records.length - 1;
+    }
+  }
+  if (compactableUpdates > 0) {
+    notes.push(`${compactableUpdates} redundant update record(s) can be compacted before next sync.`);
+  }
+
+  const awaitingSync = all.filter((r) => r.status === "pending" || r.status === "failed").length;
+  const conflicts = all.filter((r) => r.status === "conflict").length;
+  if (conflicts > 0) {
+    notes.push(`${conflicts} conflict(s) require manual resolution.`);
+  }
+
+  const healthy = stuckProcessing === 0 && conflicts === 0;
+  if (healthy && notes.length === 0) {
+    notes.push("Queue is healthy.");
+  }
+
+  return {
+    workspaceId,
+    checkedAt: new Date().toISOString(),
+    stuckProcessing,
+    compactableUpdates,
+    awaitingSync,
+    conflicts,
+    healthy,
+    notes,
+  };
+}
+

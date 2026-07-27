@@ -52,6 +52,8 @@ import {
   computeSyncStatus,
   resetFailedOperations,
   clearSyncedOperations,
+  recoverStuckOperations,
+  compactQueue,
 } from "./syncQueue";
 import { setRemoteMapping } from "./remoteMapping";
 import {
@@ -118,6 +120,14 @@ export class SyncService {
 
     this.workspaceId = workspaceId;
     await initConnectivityService();
+
+    // ── Task 5: Crash Recovery ─────────────────────────────────────────────
+    // Any record left in "processing" state means the browser was closed while
+    // a cloud push was in-flight. Reset them to "pending" so they are retried.
+    const recovered = await recoverStuckOperations(workspaceId);
+    if (recovered > 0) {
+      this._log(`Recovered ${recovered} stuck-in-processing operation(s) from previous session.`);
+    }
 
     // Rehydrate last known state from IndexedDB.
     const savedState = await getSyncState(workspaceId);
@@ -256,6 +266,15 @@ export class SyncService {
     this._processingQueue = true;
 
     try {
+      // ── Task 1: Queue Compaction ───────────────────────────────────────────
+      // Before pulling the next batch, collapse redundant "update" records for
+      // the same entity. This avoids sending N identical upserts to MongoDB
+      // when the user edited a note many times while offline.
+      const compacted = await compactQueue(workspaceId);
+      if (compacted > 0) {
+        this._log(`Compacted ${compacted} redundant update record(s) before sync pass.`);
+      }
+
       const records = await getPendingOperations(workspaceId, 10 /* batch size */);
 
       if (records.length === 0) {
