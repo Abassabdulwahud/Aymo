@@ -64,6 +64,9 @@ import {
   permanentlyDeleteNote as lnsPermanentlyDeleteNote,
 } from "./services/localNotesService";
 import { WorkspaceHealthPanel } from "./components/WorkspaceHealthPanel";
+import { syncService } from "./services/syncService";
+import { MongoDBAdapter } from "./services/mongoDbAdapter";
+
 
 
 interface HomeNote {
@@ -527,6 +530,18 @@ export default function App() {
           return;
         }
 
+        // Initialize and start SyncService
+        try {
+          await syncService.initialize(workspaceId);
+          if (authToken && authToken !== "local-offline-session-token") {
+            syncService.registerAdapter(new MongoDBAdapter(authToken));
+          }
+          syncService.start();
+        } catch (syncErr) {
+          console.error("Failed to initialize syncService:", syncErr);
+        }
+
+
         // Fetch local notes from IndexedDB
         const localNotes = await listLocalNotes(workspaceId, false);
         const trashedNotes = await listLocalNotes(workspaceId, true);
@@ -588,6 +603,7 @@ export default function App() {
 
     return () => {
       mounted = false;
+      syncService.destroy();
     };
   }, [authToken, isAuthenticated, noteLabels]);
 

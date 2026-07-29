@@ -47,21 +47,26 @@ function createId(): string {
   });
 }
 
-function createObjectStore(database: IDBDatabase, name: StoreName, options?: IDBObjectStoreParameters): IDBObjectStore {
+function createOrGetStore(
+  database: IDBDatabase,
+  upgradeTransaction: IDBTransaction,
+  name: StoreName,
+  options?: IDBObjectStoreParameters
+): IDBObjectStore {
   if (database.objectStoreNames.contains(name)) {
-    return database.transaction(name, "readonly").objectStore(name);
+    return upgradeTransaction.objectStore(name);
   }
   return database.createObjectStore(name, options);
 }
 
 function ensureSchema(database: IDBDatabase, upgradeTransaction: IDBTransaction): void {
   // ── Existing top-level stores ──────────────────────────────────────────
-  const workspaces = createObjectStore(database, "workspaces", { keyPath: "id" });
+  const workspaces = createOrGetStore(database, upgradeTransaction, "workspaces", { keyPath: "id" });
   if (!workspaces.indexNames.contains("updatedAt")) {
     workspaces.createIndex("updatedAt", "updatedAt");
   }
 
-  createObjectStore(database, "workspaceMetadata", { keyPath: "key" });
+  createOrGetStore(database, upgradeTransaction, "workspaceMetadata", { keyPath: "key" });
 
   // ── Workspace-scoped stores with workspaceId index ─────────────────────
   const workspaceScopedStores: StoreName[] = [
@@ -79,7 +84,7 @@ function ensureSchema(database: IDBDatabase, upgradeTransaction: IDBTransaction)
   ];
 
   for (const storeName of workspaceScopedStores) {
-    const store = createObjectStore(database, storeName, { keyPath: "id" });
+    const store = createOrGetStore(database, upgradeTransaction, storeName, { keyPath: "id" });
     if (!store.indexNames.contains("workspaceId")) {
       store.createIndex("workspaceId", "workspaceId");
     }
