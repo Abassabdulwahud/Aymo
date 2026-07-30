@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AYMO Synchronization E2E Test Suite</title>
+  <style>
+    body {
+      background-color: #0e1117;
+      color: #c9d1d9;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      margin: 40px;
+    }
+    h1 {
+      color: #58a6ff;
+      border-bottom: 1px solid #21262d;
+      padding-bottom: 10px;
+    }
+    button {
+      background-color: #238636;
+      color: white;
+      border: 1px solid rgba(240, 246, 252, 0.1);
+      border-radius: 6px;
+      padding: 12px 24px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 20px;
+    }
+    button:hover {
+      background-color: #2ea043;
+    }
+    #log {
+      background-color: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 20px;
+      font-family: monospace;
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 300px;
+      white-space: pre-wrap;
+    }
+    .log-entry {
+      margin-bottom: 8px;
+    }
+    .log-entry.pass {
+      color: #3fb950;
+      font-weight: bold;
+    }
+    .log-entry.fail {
+      color: #f85149;
+      font-weight: bold;
+    }
+    .log-entry.info {
+      color: #8b949e;
+    }
+  </style>
+</head>
+<body>
+  <h1>AYMO E2E Sync Verification Suite</h1>
+  <p>Verify that your local IndexedDB workspace, compaction, crash recovery, and MongoDB Atlas sync are functioning perfectly.</p>
+  <button id="run-btn">Run E2E Sync Suite</button>
+  <div id="log"></div>
+  <script type="module" src="/src/test-sync.ts"></script>
+</body>
+</html>

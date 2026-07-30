@@ -533,13 +533,17 @@ export default function App() {
         // Initialize and start SyncService
         try {
           await syncService.initialize(workspaceId);
+
+          // Real signed-in session → use JWT
           if (authToken && authToken !== "local-offline-session-token") {
             syncService.registerAdapter(new MongoDBAdapter(authToken));
           }
+
           syncService.start();
         } catch (syncErr) {
           console.error("Failed to initialize syncService:", syncErr);
         }
+
 
 
         // Fetch local notes from IndexedDB
