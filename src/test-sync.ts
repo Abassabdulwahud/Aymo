@@ -4,8 +4,23 @@ import { compactQueue, getQueueStats, checkQueueIntegrity } from "./services/syn
 import { syncService } from "./services/syncService";
 import { MongoDBAdapter } from "./services/mongoDbAdapter";
 
-// Real production JWT token we registered for E2E testing
-const REAL_JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXVzZXItc3luY0BheW1vLmFwcCIsImV4cCI6MTc4NTQwMzIyMCwicHVycG9zZSI6ImFjY2VzcyJ9.8eZRcAYUJDI8hFTjd9AGFmWKEGHJVXTRBGWo6Fnu6Qs";
+let activeJwt = "";
+
+async function loginAndGetToken(baseUrl = "http://127.0.0.1:8000"): Promise<string> {
+  const resp = await fetch(`${baseUrl}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: "test-user-sync@aymo.app",
+      password: "SecurePassword123!"
+    })
+  });
+  if (!resp.ok) {
+    throw new Error(`Login failed with status: ${resp.status}`);
+  }
+  const data = await resp.json();
+  return data.access_token;
+}
 
 const outputEl = document.getElementById("log")!;
 
@@ -18,6 +33,19 @@ function log(msg: string, status: "info" | "pass" | "fail" = "info") {
 }
 
 async function runTests() {
+  log("Starting E2E Date-Decoupled Sync Verification...", "info");
+  
+  // ── Step 0: Login and obtain dynamic JWT ──────────────────────────────────
+  try {
+    const baseUrl = window.location.origin.includes("localhost") || window.location.origin.includes("127.0.0.1")
+      ? "http://127.0.0.1:8000"
+      : window.location.origin;
+    activeJwt = await loginAndGetToken(baseUrl);
+    log("Step 0: Authenticated successfully via production endpoint. Token acquired.", "pass");
+  } catch (e: any) {
+    log(`Step 0 Failed: Authentication failed: ${e.message || e}`, "fail");
+    return;
+  }
   log("Starting E2E Synchronization Pipeline Verification...", "info");
 
   const workspaceId = "test-ws-" + Math.random().toString(36).substring(7);
@@ -123,7 +151,7 @@ async function runTests() {
   // ── Step 4: Online Sync Test ──────────────────────────────────────────────
   log("Step 4: Enabling Sync Adapter and starting SyncService...", "info");
   try {
-    const adapter = new MongoDBAdapter(REAL_JWT);
+    const adapter = new MongoDBAdapter(activeJwt);
     
     // Check connection first
     const isAvailable = await adapter.isAvailable();
@@ -167,7 +195,7 @@ async function runTests() {
   // ── Step 5: Backend Verification ──────────────────────────────────────────
   log("Step 5: Verifying data exists in MongoDB Atlas via pull API...", "info");
   try {
-    const adapter = new MongoDBAdapter(REAL_JWT);
+    const adapter = new MongoDBAdapter(activeJwt);
     const changes = await adapter.fetchChanges(workspaceId, null);
     
     log(`Pulled ${changes.length} synced changes from MongoDB Atlas`, "info");
