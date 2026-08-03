@@ -14,7 +14,7 @@ from ..models.user import User
 from ..repositories.scoped_queries import file_for_user, note_for_user
 from ..services.embeddings import LONG_TEXT_CHARACTER_THRESHOLD, replace_note_embeddings
 from ..schemas.ai import ContentSyncRequest, ContentSyncResponse, FileJobRequest, FileJobResponse
-from ..workers.tasks import extract_pdf_task, rebuild_note_embeddings_task, scrape_link_task
+from ..workers.tasks import extract_pdf_task, rebuild_note_embeddings_task, scrape_link_task, transcribe_media_task
 
 router = APIRouter(prefix="/api/protected", tags=["content"])
 
@@ -60,7 +60,7 @@ def sync_note_content(
     return ContentSyncResponse(note_id=note.id, synced_at=note.last_synced_at)
 
 
-@router.post("/files/extract-pdf", response_model=FileJobResponse, status_code=status.HTTP_200_OK)
+@router.post("/files/extract-pdf", response_model=FileJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def queue_pdf_extraction(
     payload: FileJobRequest,
     db: Session = Depends(get_db),
@@ -70,21 +70,44 @@ def queue_pdf_extraction(
     if file_record.file_type != FileType.PDF:
         raise HTTPException(status_code=400, detail="Only PDF files can use this endpoint.")
 
-    file_record.extraction_status = "completed"
+    from ..models.source import Source
+    from ..workers.tasks import process_source_task
+    source = db.query(Source).filter(
+        Source.note_id == file_record.note_id,
+        Source.public_url == file_record.file_url,
+    ).first()
+
+    # Commit the "queued" state BEFORE dispatching the task.
+    # If Celery runs in eager/synchronous mode the task executes inline inside
+    # .delay() and writes its own completion status via _update_matching_file.
+    # Committing first ensures those writes are never overwritten afterward.
+    import json
+    file_record.extraction_status = "queued"
     file_record.extraction_error = None
-    file_record.progress_percent = 100
+    file_record.progress_percent = 0
+    file_record.detailed_steps = json.dumps([
+        {"name": "Uploading & Queueing", "status": "completed"},
+        {"name": "Extracting PDF Text", "status": "pending"},
+        {"name": "Generating Semantic Embeddings", "status": "pending"}
+    ])
     db.add(file_record)
     db.commit()
 
+    if source:
+        task = process_source_task.delay(current_user.id, source.id)
+        task_id = str(task.id)
+    else:
+        task_id = "already-processed"
+
     return FileJobResponse(
         file_id=file_record.id,
-        task_id="not-applicable",
-        status="completed",
-        message="PDF extraction is disabled. File is stored successfully.",
+        task_id=task_id,
+        status="queued",
+        message="PDF extraction has been queued.",
     )
 
 
-@router.post("/files/transcribe-audio", response_model=FileJobResponse, status_code=status.HTTP_200_OK)
+@router.post("/files/transcribe-audio", response_model=FileJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def queue_media_transcription(
     payload: FileJobRequest,
     db: Session = Depends(get_db),
@@ -94,21 +117,59 @@ def queue_media_transcription(
     if file_record.file_type not in {FileType.AUDIO, FileType.VIDEO}:
         raise HTTPException(status_code=400, detail="Only audio or video files can use this endpoint.")
 
-    file_record.extraction_status = "completed"
-    file_record.progress_percent = 100
+    if payload.duration_seconds is not None:
+        file_record.duration_seconds = payload.duration_seconds
+
+    from ..models.source import Source
+    from ..workers.tasks import process_source_task
+    source = db.query(Source).filter(
+        Source.note_id == file_record.note_id,
+        Source.public_url == file_record.file_url,
+    ).first()
+
+    if source and payload.duration_seconds is not None:
+        source.duration_seconds = payload.duration_seconds
+        db.add(source)
+
+    is_resuming = (
+        file_record.extraction_status == "failed"
+        and file_record.processed_chunks is not None
+        and file_record.processed_chunks > 0
+    )
+
+    # Commit the "queued" state BEFORE dispatching the task.
+    # If Celery runs in eager/synchronous mode the task executes inline inside
+    # .delay() and writes its own completion status via _update_matching_file.
+    # Committing first ensures those writes are never overwritten afterward.
+    import json
+    from ..utils.extraction.media import get_initial_steps
+    is_video = file_record.file_type == FileType.VIDEO
+    file_record.extraction_status = "queued"
     file_record.extraction_error = None
+    if not is_resuming:
+        file_record.progress_percent = 0
+        file_record.processed_chunks = 0
+        file_record.total_chunks = 0
+        file_record.partial_transcript = None
+    file_record.detailed_steps = json.dumps(get_initial_steps(is_video, processed_chunks=file_record.processed_chunks))
     db.add(file_record)
     db.commit()
 
+    if source:
+        task = process_source_task.delay(current_user.id, source.id)
+        task_id = str(task.id)
+    else:
+        task_id = "already-processed"
+
     return FileJobResponse(
         file_id=file_record.id,
-        task_id="not-applicable",
-        status="completed",
-        message="AI transcription is disabled. File is stored successfully.",
+        task_id=task_id,
+        status="queued",
+        message="Media transcription has been queued.",
     )
 
 
-@router.post("/files/scrape-link", response_model=FileJobResponse, status_code=status.HTTP_200_OK)
+@router.post("/files/scrape-link", response_model=FileJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def queue_link_scrape(
     payload: FileJobRequest,
     db: Session = Depends(get_db),
@@ -118,17 +179,36 @@ def queue_link_scrape(
     if file_record.file_type != FileType.LINK:
         raise HTTPException(status_code=400, detail="Only link files can use this endpoint.")
 
-    file_record.extraction_status = "completed"
+    from ..models.source import Source
+    from ..workers.tasks import process_source_task
+    source = db.query(Source).filter(
+        Source.note_id == file_record.note_id,
+        Source.public_url == file_record.file_url,
+    ).first()
+
+    if source:
+        task = process_source_task.delay(current_user.id, source.id)
+        task_id = str(task.id)
+    else:
+        task_id = "already-processed"
+
+    file_record.extraction_status = "queued"
     file_record.extraction_error = None
-    file_record.progress_percent = 100
+    file_record.progress_percent = 0
+    import json
+    file_record.detailed_steps = json.dumps([
+        {"name": "Uploading & Queueing", "status": "completed"},
+        {"name": "Scraping Web Page", "status": "pending"},
+        {"name": "Generating Semantic Embeddings", "status": "pending"}
+    ])
     db.add(file_record)
     db.commit()
 
     return FileJobResponse(
         file_id=file_record.id,
-        task_id="not-applicable",
-        status="completed",
-        message="Link scraping is disabled. File is stored successfully.",
+        task_id=task_id,
+        status="queued",
+        message="Web page scraping has been queued.",
     )
 
 

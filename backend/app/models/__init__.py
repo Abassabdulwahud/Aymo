@@ -1,4 +1,5 @@
 from .ai_response_cache import AIResponseCache
+from .annotation import Annotation
 from .extracted_content import ExtractedContent
 from .file import File
 from .note import Note
@@ -11,6 +12,7 @@ from .user import User
 
 __all__ = [
     "AIResponseCache",
+    "Annotation",
     "ExtractedContent",
     "File",
     "Note",

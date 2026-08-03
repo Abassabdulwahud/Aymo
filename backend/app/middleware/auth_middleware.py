@@ -28,3 +28,5 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return JSONResponse({"detail": "Invalid or expired token."}, status_code=401)
 
         return await call_next(request)
+
+
