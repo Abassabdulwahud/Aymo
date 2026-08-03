@@ -9,6 +9,7 @@ from .middleware.auth_middleware import AuthMiddleware
 from .models import AIResponseCache, ExtractedContent, File, Note, Tag, User  # noqa: F401
 from .routes.ai import router as ai_router
 from .routes.ai import ws_router as ai_ws_router
+from .routes.annotations import router as annotations_router
 from .routes.auth import router as auth_router
 from .routes.content import router as content_router
 from .routes.files import router as files_router
@@ -17,7 +18,9 @@ from .routes.notes import router as notes_router
 from .routes.protected import router as protected_router
 from .routes.settings import router as settings_router
 from .routes.tags import router as tags_router
-from .services.embeddings import EMBEDDING_DIMENSION, EMBEDDING_MODEL_NAME
+from .routes.sync import router as sync_router
+from .services.embeddings import EMBEDDING_DIMENSION, EMBEDDING_MODEL_NAME, initialize_embedding_model
+
 from .services.translation_service import initialize_translations
 
 settings = get_settings()
@@ -30,6 +33,10 @@ app.add_middleware(AuthMiddleware)
 # (comma-separated list of exact origins).
 _HARDCODED_ORIGINS: list[str] = [
     "https://aymo-xi.vercel.app",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
 ]
 _extra_origins: list[str] = [
     o.strip()
@@ -51,10 +58,13 @@ app.include_router(notes_router)
 app.include_router(tags_router)
 app.include_router(files_router)
 app.include_router(sources_router)
+app.include_router(annotations_router)
 app.include_router(content_router)
 app.include_router(ai_router)
 app.include_router(settings_router)
 app.include_router(ai_ws_router)
+app.include_router(sync_router)
+
 
 project_root = Path(__file__).resolve().parents[2]
 app.mount("/web", StaticFiles(directory=str(project_root)), name="web")
@@ -87,23 +97,27 @@ def run_migrations():
 
 
 @app.on_event("startup")
-def on_startup():
+async def warm_embedding_model():
+    from .mongodb import init_mongodb
+    await init_mongodb()
+    
     # Instantiate the storage provider at startup to trigger validation early
     from .storage import get_storage_provider
     get_storage_provider()
 
     run_migrations()
     initialize_translations()
-
-    # NOTE: do NOT call initialize_embedding_model() here.
-    # Loading SentenceTransformer (torch) in the web process consumes ~330 MB
-    # before any request is served, which exceeds Render's 512 MB free-tier limit.
-    # The model is loaded lazily on first use inside the Celery worker process
-    # via get_embedding_model() which is decorated with @lru_cache.
+    initialize_embedding_model()
     app.state.embedding_model_name = EMBEDDING_MODEL_NAME
     app.state.embedding_dimension = EMBEDDING_DIMENSION
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "environment": settings.app_env}
+    from .mongodb import is_mongo_available
+    return {
+        "status": "ok",
+        "environment": settings.app_env,
+        "mongodb": "connected" if is_mongo_available() else "disconnected"
+    }
+
