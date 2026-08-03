@@ -1,26 +1,36 @@
 from datetime import datetime, timedelta, timezone
 
+import bcrypt as _bcrypt_lib
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from ..config import get_settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 settings = get_settings()
 
+_BCRYPT_ROUNDS = 12
 
-def _truncate_password(password: str) -> str:
-    """Truncate password to 72 bytes to comply with bcrypt's hard limit."""
-    encoded = password.encode("utf-8")
-    return encoded[:72].decode("utf-8", errors="ignore")
+
+def _password_bytes(password: str) -> bytes:
+    """Encode and truncate password to 72 bytes (bcrypt hard limit)."""
+    return password.encode("utf-8")[:72]
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(_truncate_password(password))
+    """Return a bcrypt hash of *password* as a UTF-8 string."""
+    salt = _bcrypt_lib.gensalt(rounds=_BCRYPT_ROUNDS)
+    hashed = _bcrypt_lib.hashpw(_password_bytes(password), salt)
+    # bcrypt 4.x returns bytes; bcrypt 3.x returns str — normalise to str.
+    return hashed.decode("utf-8") if isinstance(hashed, bytes) else hashed
 
 
 def verify_password(plain_password: str, password_hash: str) -> bool:
-    return pwd_context.verify(_truncate_password(plain_password), password_hash)
+    """Return True if *plain_password* matches *password_hash*."""
+    try:
+        pw_bytes = _password_bytes(plain_password)
+        hash_bytes = password_hash.encode("utf-8") if isinstance(password_hash, str) else password_hash
+        return _bcrypt_lib.checkpw(pw_bytes, hash_bytes)
+    except Exception:
+        return False
 
 
 def create_access_token(subject: str) -> str:
