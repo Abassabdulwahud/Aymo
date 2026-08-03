@@ -74,6 +74,8 @@ class Settings:
     cloudinary_api_key: Optional[str]
     cloudinary_api_secret: Optional[str]
     cloudinary_folder: Optional[str]
+    mongodb_url: Optional[str]
+
 
 
 def _resolve_jwt_secret_key(app_env: str) -> str:
@@ -148,4 +150,6 @@ def get_settings() -> Settings:
         cloudinary_api_key=os.getenv("CLOUDINARY_API_KEY"),
         cloudinary_api_secret=os.getenv("CLOUDINARY_API_SECRET"),
         cloudinary_folder=os.getenv("CLOUDINARY_FOLDER", "aymo"),
+        mongodb_url=os.getenv("MONGODB_URL"),
     )
+
