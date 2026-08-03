@@ -156,7 +156,7 @@ export function NoteSidePanel({
       } catch {
         if (!isCancelled) {
           setPreviewUrl(selectedUpload.source);
-          setPreviewError(t("viewer.previewLoadFailed"));
+          setPreviewError(null); // Clear preview error to let browser media player attempt direct source rendering
         }
       }
     };

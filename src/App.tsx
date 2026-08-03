@@ -701,21 +701,39 @@ export default function App() {
     fullName: string;
   }) => {
     const normalizedEmail = email.trim().toLowerCase();
-    if (mode === "signup") {
-      await registerWithEmail(fullName.trim(), normalizedEmail, password);
+    try {
+      if (mode === "signup") {
+        await registerWithEmail(fullName.trim(), normalizedEmail, password);
+      }
+      const token = await loginWithEmail(normalizedEmail, password);
+      await finalizeAuth(token);
+    } catch (err) {
+      clearAuthToken();
+      setAuthToken(null);
+      throw err;
     }
-    const token = await loginWithEmail(normalizedEmail, password);
-    await finalizeAuth(token);
   };
 
   const handleGoogleAuth = async (oauthToken: string) => {
-    const token = await loginWithGoogle(oauthToken);
-    await finalizeAuth(token);
+    try {
+      const token = await loginWithGoogle(oauthToken);
+      await finalizeAuth(token);
+    } catch (err) {
+      clearAuthToken();
+      setAuthToken(null);
+      throw err;
+    }
   };
 
   const handleAppleAuth = async (oauthToken: string) => {
-    const token = await loginWithApple(oauthToken);
-    await finalizeAuth(token);
+    try {
+      const token = await loginWithApple(oauthToken);
+      await finalizeAuth(token);
+    } catch (err) {
+      clearAuthToken();
+      setAuthToken(null);
+      throw err;
+    }
   };
 
   const handleForgotPassword = async (email: string) => {
