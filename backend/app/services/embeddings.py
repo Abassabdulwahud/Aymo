@@ -33,17 +33,11 @@ def get_embedding_model():
 
 
 def initialize_embedding_model() -> None:
-    """No-op at startup.
-
-    The embedding model is loaded lazily on first use via get_embedding_model()
-    which is decorated with @lru_cache — guaranteeing a single instance per
-    process without forcing torch/sentence_transformers into the web process
-    at startup, which would consume ~330 MB before any request is served.
-    """
-    logger.info(
-        "Embedding model '%s' will be loaded on first use (lazy, singleton via lru_cache).",
-        EMBEDDING_MODEL_NAME,
-    )
+    try:
+        get_embedding_model()
+        logger.info("Embedding model %s initialized.", EMBEDDING_MODEL_NAME)
+    except Exception as exc:  # pragma: no cover - depends on local model/runtime availability
+        logger.warning("Embedding model could not be initialized at startup: %s", exc)
 
 
 def chunk_content(value: str) -> List[str]:
@@ -122,12 +116,6 @@ def chunk_media_transcript(value: str) -> List[str]:
 
 
 def embed_texts(texts: Sequence[str]) -> List[List[float]]:
-    """Embed a list of text strings using the local SentenceTransformer model.
-
-    The model is loaded lazily on first call and cached for the lifetime of
-    the process (see get_embedding_model).  In production this runs inside
-    the Celery worker process, keeping the web process free of PyTorch.
-    """
     if not texts:
         return []
 
