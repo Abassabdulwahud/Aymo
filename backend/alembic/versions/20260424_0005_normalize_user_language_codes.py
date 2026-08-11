@@ -72,14 +72,14 @@ def upgrade() -> None:
         END
         """
     )
-    op.alter_column(
-        "users",
-        "preferred_language",
-        existing_type=sa.String(length=50),
-        type_=sa.String(length=10),
-        existing_nullable=False,
-        server_default="en",
-    )
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column(
+            "preferred_language",
+            existing_type=sa.String(length=50),
+            type_=sa.String(length=10),
+            existing_nullable=False,
+            server_default="en",
+        )
 
 
 def downgrade() -> None:
@@ -112,11 +112,11 @@ def downgrade() -> None:
             END
             """
         )
-    op.alter_column(
-        "users",
-        "preferred_language",
-        existing_type=sa.String(length=10),
-        type_=sa.String(length=50),
-        existing_nullable=False,
-        server_default="English",
-    )
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column(
+            "preferred_language",
+            existing_type=sa.String(length=10),
+            type_=sa.String(length=50),
+            existing_nullable=False,
+            server_default="English",
+        )

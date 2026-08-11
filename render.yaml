@@ -21,11 +21,14 @@ services:
       # - key: APP_ALLOWED_ORIGINS
       #   value: https://YOUR-FRONTEND.onrender.com
 
-      # ── Database (set from Render PostgreSQL service) ──────────────────────
+      # ── Database ───────────────────────────────────────────────────────────
       - key: DATABASE_URL
-        fromDatabase:
-          name: aymo-db         # Must match your Render PostgreSQL service name
-          property: connectionString
+        value: sqlite:////data/aymo.db
+
+    disk:
+      name: aymo-data
+      mountPath: /data
+      sizeGB: 1
 
       # ── Redis (set from Render Redis service) ─────────────────────────────
       - key: REDIS_URL
@@ -82,9 +85,7 @@ services:
       - key: APP_ENV
         value: production
       - key: DATABASE_URL
-        fromDatabase:
-          name: aymo-db
-          property: connectionString
+        value: sqlite:////data/aymo.db
       - key: REDIS_URL
         fromService:
           name: aymo-redis

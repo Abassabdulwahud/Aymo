@@ -21,11 +21,11 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.add_column('files', sa.Column('processed_chunks', sa.Integer(), nullable=True))
     op.execute("UPDATE files SET processed_chunks = 0")
-    op.alter_column('files', 'processed_chunks', nullable=False)
-
     op.add_column('files', sa.Column('total_chunks', sa.Integer(), nullable=True))
     op.execute("UPDATE files SET total_chunks = 0")
-    op.alter_column('files', 'total_chunks', nullable=False)
+    with op.batch_alter_table("files") as batch_op:
+        batch_op.alter_column('processed_chunks', nullable=False)
+        batch_op.alter_column('total_chunks', nullable=False)
 
     op.add_column('files', sa.Column('partial_transcript', sa.Text(), nullable=True))
 

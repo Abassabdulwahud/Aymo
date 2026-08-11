@@ -93,7 +93,8 @@ def run_migrations():
         command.upgrade(alembic_cfg, "head")
         logger.info("Database migrations applied successfully.")
     except Exception as e:
-        logger.error(f"Error running database migrations: {e}", exc_info=True)
+        logger.error(f"CRITICAL: Database migrations failed: {e}", exc_info=True)
+        raise e
 
 
 @app.on_event("startup")

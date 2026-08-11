@@ -20,7 +20,8 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.add_column("notes", sa.Column("last_synced_at", sa.DateTime(timezone=True), nullable=True))
     op.execute("UPDATE notes SET last_synced_at = COALESCE(updated_at, CURRENT_TIMESTAMP)")
-    op.alter_column("notes", "last_synced_at", nullable=False)
+    with op.batch_alter_table("notes") as batch_op:
+        batch_op.alter_column("last_synced_at", nullable=False)
 
     op.add_column("files", sa.Column("content_hash", sa.String(length=64), nullable=True))
     op.add_column("files", sa.Column("duration_seconds", sa.Integer(), nullable=True))
