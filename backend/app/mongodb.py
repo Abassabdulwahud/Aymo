@@ -26,11 +26,13 @@ async def init_mongodb() -> bool:
 
     try:
         logger.info("Connecting to MongoDB...")
+        import certifi
         # Short timeout (10 seconds) to prevent startup hangs if offline
         _client = AsyncIOMotorClient(
             settings.mongodb_url,
             serverSelectionTimeoutMS=10000,
-            connectTimeoutMS=10000
+            connectTimeoutMS=10000,
+            tlsCAFile=certifi.where()
         )
         
         # Ping the database to verify startup connection
