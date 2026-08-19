@@ -3,75 +3,67 @@ services:
   - type: web
     name: aymo-backend
     runtime: python
-    rootDir: backend           # All build/start commands run from here
+    rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    plan: starter              # Change to "starter" or above for production
+    plan: starter
 
     envVars:
-      # ── Python version ─────────────────────────────────────────────────────
       - key: PYTHON_VERSION
         value: "3.11.11"
 
-      # ── App ────────────────────────────────────────────────────────────────
       - key: APP_ENV
         value: production
 
-      # ── Set this to your actual Render frontend URL after first deploy ──────
-      # - key: APP_ALLOWED_ORIGINS
-      #   value: https://YOUR-FRONTEND.onrender.com
-
-      # ── Database ───────────────────────────────────────────────────────────
       - key: DATABASE_URL
         value: sqlite:////data/aymo.db
 
-    disk:
-      name: aymo-data
-      mountPath: /data
-      sizeGB: 1
+      - key: TRANSCRIPTION_PROVIDER
+        value: openai
+      - key: TRANSCRIPTION_MODEL
+        value: whisper-1
 
-      # ── Redis (set from Render Redis service) ─────────────────────────────
-      - key: REDIS_URL
-        fromService:
-          name: aymo-redis      # Must match your Render Redis service name
-          type: redis
-          property: connectionString
-      - key: CELERY_BROKER_URL
-        fromService:
-          name: aymo-redis
-          type: redis
-          property: connectionString
-      - key: CELERY_RESULT_BACKEND
-        fromService:
-          name: aymo-redis
-          type: redis
-          property: connectionString
+      - key: UPLOADS_DIR
+        value: /opt/render/project/src/uploads
+      - key: UPLOADS_BASE_URL
+        value: /uploads
 
-      # ── Secrets (add via Render Dashboard → Environment tab) ───────────────
+      - key: CELERY_TASK_ALWAYS_EAGER
+        value: "false"
+
+      # ── Redis — uncomment when aymo-redis service is set up ───────────────
+      # - key: REDIS_URL
+      #   fromService:
+      #     name: aymo-redis
+      #     type: redis
+      #     property: connectionString
+      # - key: CELERY_BROKER_URL
+      #   fromService:
+      #     name: aymo-redis
+      #     type: redis
+      #     property: connectionString
+      # - key: CELERY_RESULT_BACKEND
+      #   fromService:
+      #     name: aymo-redis
+      #     type: redis
+      #     property: connectionString
+
+      # ── Secrets (set via Render Dashboard → Environment tab) ─────────────
       # - key: JWT_SECRET_KEY
       #   value: <generate with: python -c "import secrets; print(secrets.token_urlsafe(48))">
       # - key: OPENAI_API_KEY
       #   value: ...
       # - key: GEMINI_API_KEY
       #   value: ...
+      # - key: MONGODB_URL
+      #   value: ...
 
-      # ── Transcription: use "openai" on free tier (no GPU for faster-whisper)
-      - key: TRANSCRIPTION_PROVIDER
-        value: openai
-      - key: TRANSCRIPTION_MODEL
-        value: whisper-1
+    disk:
+      name: aymo-data
+      mountPath: /data
+      sizeGB: 1
 
-      # ── Uploads dir ────────────────────────────────────────────────────────
-      - key: UPLOADS_DIR
-        value: /opt/render/project/src/uploads
-      - key: UPLOADS_BASE_URL
-        value: /uploads
-
-      # ── Misc ───────────────────────────────────────────────────────────────
-      - key: CELERY_TASK_ALWAYS_EAGER
-        value: "false"
-
-  # ─── Celery Worker (enabled for async processing) ─────────────────────────
+  # ─── Celery Worker ────────────────────────────────────────────────────────
   - type: worker
     name: aymo-celery-worker
     runtime: python
@@ -79,6 +71,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=1
     plan: starter
+
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.11"
@@ -86,30 +79,30 @@ services:
         value: production
       - key: DATABASE_URL
         value: sqlite:////data/aymo.db
-      - key: REDIS_URL
-        fromService:
-          name: aymo-redis
-          type: redis
-          property: connectionString
-      - key: CELERY_BROKER_URL
-        fromService:
-          name: aymo-redis
-          type: redis
-          property: connectionString
-      - key: CELERY_RESULT_BACKEND
-        fromService:
-          name: aymo-redis
-          type: redis
-          property: connectionString
       - key: CELERY_TASK_ALWAYS_EAGER
         value: "false"
-      # ── Transcription: use OpenAI Whisper API (no local model download on worker) ──
       - key: TRANSCRIPTION_PROVIDER
         value: openai
       - key: TRANSCRIPTION_MODEL
         value: whisper-1
-      # ── Uploads dir (mirrors web service) ─────────────────────────────────────
       - key: UPLOADS_DIR
         value: /opt/render/project/src/uploads
       - key: UPLOADS_BASE_URL
         value: /uploads
+
+      # ── Redis — uncomment when aymo-redis service is set up ───────────────
+      # - key: REDIS_URL
+      #   fromService:
+      #     name: aymo-redis
+      #     type: redis
+      #     property: connectionString
+      # - key: CELERY_BROKER_URL
+      #   fromService:
+      #     name: aymo-redis
+      #     type: redis
+      #     property: connectionString
+      # - key: CELERY_RESULT_BACKEND
+      #   fromService:
+      #     name: aymo-redis
+      #     type: redis
+      #     property: connectionString
