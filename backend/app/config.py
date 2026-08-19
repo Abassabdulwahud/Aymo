@@ -100,10 +100,14 @@ def get_settings() -> Settings:
     _load_dotenv_file()
     app_env = os.getenv("APP_ENV", "development")
 
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if app_env == "production" and (not database_url or database_url.startswith("postgres")):
+        database_url = "sqlite:////data/aymo.db"
+
     return Settings(
         app_name=os.getenv("APP_NAME", "AYMO Notebook API"),
         app_env=app_env,
-        database_url=os.getenv("DATABASE_URL", ""),
+        database_url=database_url,
         uploads_dir=os.getenv("UPLOADS_DIR", "uploads"),
         uploads_base_url=os.getenv("UPLOADS_BASE_URL", "/uploads"),
         image_max_dimension=int(os.getenv("IMAGE_MAX_DIMENSION", "1600")),
