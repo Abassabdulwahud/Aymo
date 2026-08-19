@@ -126,3 +126,19 @@ def health():
         "mongodb": "connected" if is_mongo_available() else "disconnected"
     }
 
+@app.get("/debug/db")
+def debug_db():
+    """Diagnostic endpoint: shows the active database configuration (safe to expose in production)."""
+    import traceback
+    from .database import database_url as active_db_url, engine
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+            db_ok = True
+    except Exception as e:
+        db_ok = False
+    return {
+        "database_url": active_db_url,
+        "database_reachable": db_ok,
+        "app_env": settings.app_env,
+    }
