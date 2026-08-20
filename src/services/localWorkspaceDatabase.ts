@@ -361,3 +361,25 @@ export function generateUuid(): string {
   return createId();
 }
 
+export async function putLocalAttachmentBlob(id: string, workspaceId: string, blob: Blob): Promise<void> {
+  await runTransaction("attachmentBlobs", "readwrite", async (transaction) => {
+    transaction.objectStore("attachmentBlobs").put({ id, workspaceId, blob });
+  });
+}
+
+export async function getLocalAttachmentBlob(id: string): Promise<Blob | null> {
+  return runTransaction("attachmentBlobs", "readonly", async (transaction) => {
+    const record = await requestToPromise<{ id: string; workspaceId: string; blob: Blob } | undefined>(
+      transaction.objectStore("attachmentBlobs").get(id),
+    );
+    return record?.blob ?? null;
+  });
+}
+
+export async function deleteLocalAttachmentBlob(id: string): Promise<void> {
+  await runTransaction("attachmentBlobs", "readwrite", async (transaction) => {
+    transaction.objectStore("attachmentBlobs").delete(id);
+  });
+}
+
+
