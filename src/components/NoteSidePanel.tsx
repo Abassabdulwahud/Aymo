@@ -135,15 +135,10 @@ export function NoteSidePanel({
         return;
       }
 
-      const viewerKind = detectViewerKind(selectedUpload);
-      if (!["image", "pdf", "video", "audio"].includes(viewerKind)) {
-        setPreviewUrl(selectedUpload.source);
-        setPreviewError(null);
-        return;
-      }
-
-      // ── Local blob: URLs — use directly, no network fetch needed ──────────
-      // These are Object URLs recreated from IndexedDB blobs on workspace load.
+      // ── Local blob: URLs — set synchronously, no fetch needed ─────────────
+      // These are Object URLs created from the File object at upload time or
+      // recreated from IndexedDB blobs during workspace hydration.
+      // Setting previewUrl synchronously avoids any race with the async path.
       if (selectedUpload.source.startsWith("blob:")) {
         if (!isCancelled) {
           setPreviewUrl(selectedUpload.source);
@@ -152,6 +147,13 @@ export function NoteSidePanel({
         return;
       }
       // ── End local short-circuit ────────────────────────────────────────────
+
+      const viewerKind = detectViewerKind(selectedUpload);
+      if (!["image", "pdf", "video", "audio"].includes(viewerKind)) {
+        setPreviewUrl(selectedUpload.source);
+        setPreviewError(null);
+        return;
+      }
 
       try {
         const response = await fetch(selectedUpload.source);
@@ -167,7 +169,7 @@ export function NoteSidePanel({
       } catch {
         if (!isCancelled) {
           setPreviewUrl(selectedUpload.source);
-          setPreviewError(null); // Clear preview error to let browser media player attempt direct source rendering
+          setPreviewError(null);
         }
       }
     };
@@ -342,58 +344,68 @@ export function NoteSidePanel({
         </div>
 
         <div className="file-viewer-surface">
-          {viewerKind === "image" && previewUrl ? <img className="file-preview-image" src={previewUrl} alt={selectedUpload.name} /> : null}
-          {viewerKind === "video" && previewUrl ? (
-            <div className="media-preview-container">
-              <video className="file-preview-media" src={previewUrl} controls />
-            </div>
-          ) : null}
-          {viewerKind === "audio" && previewUrl ? (
-            <div className="media-preview-container">
-              <audio className="file-preview-audio" src={previewUrl} controls />
-            </div>
-          ) : null}
-          {viewerKind === "link" ? (
-            <div className="file-link-preview">
-              <p>{selectedUpload.source ?? t("viewer.noLink")}</p>
-              {selectedUpload.source ? (
-                <a className="text-action" href={selectedUpload.source} target="_blank" rel="noreferrer">
-                  {t("viewer.openLink")}
-                </a>
-              ) : null}
-            </div>
-          ) : null}
-          {viewerKind === "pdf" && previewUrl ? (
-            <div className="pdf-viewer-stage-container" style={{ display: "flex", width: "100%", height: "100%", position: "relative" }}>
-              <div className="pdf-viewer-stage" style={{ flexGrow: 1, minWidth: 0 }}>
-                <PdfCanvasViewer
-                  source={previewUrl}
-                  sourceId={selectedUpload.id}
-                  annotations={annotations.filter((a) => a.source_id === selectedUpload.id)}
-                  flashAnnotationId={flashAnnotationId}
-                  jumpToPage={jumpToPage}
-                  onAnnotationCreate={onAnnotationCreate}
-                  onAskAI={onAskAI}
-                  onCopyText={onCopyText}
-                  onSearchGoogle={onSearchGoogle}
-                  onCreateNote={onCreateNoteFromAnnotation}
-                  onAppendToNote={onAppendNoteFromAnnotation}
-                />
-              </div>
-              {showAnnotationsPanel && (
-                <AnnotationsPanel
-                  annotations={annotations.filter((a) => a.source_id === selectedUpload.id)}
-                  onJumpToPage={(pIndex) => onJumpToPage(pIndex)}
-                  onFlash={(id) => onFlash(id)}
-                  onDelete={onDeleteAnnotation}
-                  onUpdateComment={onUpdateAnnotationComment}
-                  onCreateNote={(a) => onCreateNoteFromAnnotation(a.selected_text, (a.page_number ?? 0) + 1)}
-                  onAppendToNote={(a) => onAppendNoteFromAnnotation(a.selected_text, (a.page_number ?? 0) + 1)}
-                  onClose={() => setShowAnnotationsPanel(false)}
-                />
-              )}
-            </div>
-          ) : null}
+          {/* effectiveUrl: prefer previewUrl (fetched/validated), fall back to the
+              raw source URL (blob: or CDN URL) so the viewer never goes blank
+              due to a loadPreview race condition or async delay. */}
+          {(() => {
+            const effectiveUrl = previewUrl ?? selectedUpload.source ?? null;
+            return (
+              <>
+                {viewerKind === "image" && effectiveUrl ? <img className="file-preview-image" src={effectiveUrl} alt={selectedUpload.name} /> : null}
+                {viewerKind === "video" && effectiveUrl ? (
+                  <div className="media-preview-container">
+                    <video className="file-preview-media" src={effectiveUrl} controls />
+                  </div>
+                ) : null}
+                {viewerKind === "audio" && effectiveUrl ? (
+                  <div className="media-preview-container">
+                    <audio className="file-preview-audio" src={effectiveUrl} controls />
+                  </div>
+                ) : null}
+                {viewerKind === "link" ? (
+                  <div className="file-link-preview">
+                    <p>{selectedUpload.source ?? t("viewer.noLink")}</p>
+                    {selectedUpload.source ? (
+                      <a className="text-action" href={selectedUpload.source} target="_blank" rel="noreferrer">
+                        {t("viewer.openLink")}
+                      </a>
+                    ) : null}
+                  </div>
+                ) : null}
+                {viewerKind === "pdf" && effectiveUrl ? (
+                  <div className="pdf-viewer-stage-container" style={{ display: "flex", width: "100%", height: "100%", position: "relative" }}>
+                    <div className="pdf-viewer-stage" style={{ flexGrow: 1, minWidth: 0 }}>
+                      <PdfCanvasViewer
+                        source={effectiveUrl}
+                        sourceId={selectedUpload.id}
+                        annotations={annotations.filter((a) => a.source_id === selectedUpload.id)}
+                        flashAnnotationId={flashAnnotationId}
+                        jumpToPage={jumpToPage}
+                        onAnnotationCreate={onAnnotationCreate}
+                        onAskAI={onAskAI}
+                        onCopyText={onCopyText}
+                        onSearchGoogle={onSearchGoogle}
+                        onCreateNote={onCreateNoteFromAnnotation}
+                        onAppendToNote={onAppendNoteFromAnnotation}
+                      />
+                    </div>
+                    {showAnnotationsPanel && (
+                      <AnnotationsPanel
+                        annotations={annotations.filter((a) => a.source_id === selectedUpload.id)}
+                        onJumpToPage={(pIndex) => onJumpToPage(pIndex)}
+                        onFlash={(id) => onFlash(id)}
+                        onDelete={onDeleteAnnotation}
+                        onUpdateComment={onUpdateAnnotationComment}
+                        onCreateNote={(a) => onCreateNoteFromAnnotation(a.selected_text, (a.page_number ?? 0) + 1)}
+                        onAppendToNote={(a) => onAppendNoteFromAnnotation(a.selected_text, (a.page_number ?? 0) + 1)}
+                        onClose={() => setShowAnnotationsPanel(false)}
+                      />
+                    )}
+                  </div>
+                ) : null}
+              </>
+            );
+          })()}
           {viewerKind === "document" ? (
             <div className="file-preview-fallback">
               <p>{t("viewer.documentInlineUnsupported")}</p>
