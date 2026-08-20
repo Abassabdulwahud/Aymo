@@ -1047,7 +1047,25 @@ export default function App() {
   };
 
   const replaceNote = (nextNote: HomeNote) => {
-    setNotes((prev) => prev.map((note) => (note.id === nextNote.id ? nextNote : note)));
+    setNotes((prev) =>
+      prev.map((note) => {
+        if (note.id !== nextNote.id) return note;
+        // ── Preserve in-memory blob source URLs ────────────────────────────
+        // When note metadata (title, pin, body) is saved, mapLocalNoteToHomeNote
+        // re-derives uploads from LocalNote.files which has no `source` field.
+        // We merge the current in-memory `source` (Object URL / CDN URL) back
+        // in so PDF/image/video/audio viewers never lose their render source.
+        const sourceById = new Map(
+          note.uploads
+            .filter((u) => u.source)
+            .map((u) => [String(u.id), u.source as string]),
+        );
+        const mergedUploads = nextNote.uploads.map((u) =>
+          u.source ? u : { ...u, source: sourceById.get(String(u.id)) },
+        );
+        return { ...nextNote, uploads: mergedUploads };
+      })
+    );
   };
 
   const queueExtractionForFile = async (file: Pick<BackendFile, "id" | "file_type">) => {
@@ -1056,6 +1074,9 @@ export default function App() {
 
   const refreshNoteFiles = async () => {
     if (!authToken || !selectedNote) return;
+    // ── Skip backend poll in local-offline mode ───────────────────────────
+    // All uploads are stored locally; there is no server to poll.
+    if (authToken === "local-offline-session-token") return;
 
     // If we just finished an upload < 2s ago, skip this poll tick. The backend
     // may not yet have the new record, and an early poll would briefly show the
