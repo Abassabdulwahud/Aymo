@@ -54,6 +54,9 @@ import {
   listLocalNotes,
   getLocalNote,
   getActiveWorkspaceId,
+  putLocalAttachmentBlob,
+  getLocalAttachmentBlob,
+  deleteLocalAttachmentBlob,
 } from "./services/localWorkspaceDatabase";
 import {
   createNote as lnsCreateNote,
@@ -566,7 +569,35 @@ export default function App() {
           mappedNotes.map((note) => [note.id, { title: note.title, body: note.body }]),
         );
 
-        setNotes(mappedNotes);
+        // ── Rehydrate local attachment blobs with fresh Object URLs ────────────
+        // Object URLs are tab-scoped and revoked on browser restart. After a
+        // reload we need to re-read each local blob from IndexedDB and create a
+        // new Object URL so the PDF viewer, image tag, and media players can
+        // render local files without any network request.
+        const notesWithUrls = await Promise.all(
+          mappedNotes.map(async (note) => {
+            if (!note.uploads || note.uploads.length === 0) return note;
+            const rehydratedUploads = await Promise.all(
+              note.uploads.map(async (upload) => {
+                // Only rehydrate attachments whose IDs are local UUIDs (strings).
+                if (typeof upload.id !== "string") return upload;
+                // Skip entries that already have a usable URL (e.g. remote CDN URLs).
+                if (upload.source && !upload.source.startsWith("blob:")) return upload;
+                try {
+                  const blob = await getLocalAttachmentBlob(upload.id);
+                  if (!blob) return upload;
+                  return { ...upload, source: URL.createObjectURL(blob) };
+                } catch {
+                  return upload;
+                }
+              }),
+            );
+            return { ...note, uploads: rehydratedUploads };
+          }),
+        );
+        // ── End rehydration ────────────────────────────────────────────────────
+
+        setNotes(notesWithUrls);
         setTrashedNoteCount(trashedNotes.length);
         setTagCatalog(tagItems);
         setSelectedId((current) => {
@@ -1263,6 +1294,54 @@ export default function App() {
       )
     );
 
+    // ── LOCAL-FIRST PATH ─────────────────────────────────────────────────────
+    // When offline (or explicitly in local-only mode), skip the REST API call.
+    // Each file is stored as a raw Blob in IndexedDB and an Object URL is
+    // created so the media player / PDF viewer can render it immediately.
+    if (authToken === "local-offline-session-token") {
+      const localItems: UploadedItem[] = [];
+      const workspaceId = String(selectedNote.id);
+      for (const file of Array.from(files)) {
+        const fileId = crypto.randomUUID();
+        await putLocalAttachmentBlob(fileId, workspaceId, file);
+        const objectUrl = URL.createObjectURL(file);
+        localItems.push({
+          id: fileId,
+          name: file.name,
+          kind: detectUploadKind(file.name),
+          sizeLabel: bytesToLabel(file.size),
+          source: objectUrl,
+          addedAt: noteLabels.justNow,
+          extractionStatus: "completed",
+        });
+      }
+
+      // Persist file metadata on the local note (no Blob/Object URL — only serialisable fields).
+      const localNote = await getLocalNote(String(selectedNote.id));
+      if (localNote) {
+        const metaEntries = localItems.map((item) => ({
+          id: item.id,
+          name: item.name,
+          kind: item.kind,
+          sizeLabel: item.sizeLabel,
+          addedAt: item.addedAt,
+          extractionStatus: item.extractionStatus,
+        }));
+        await lnsUpdateNote({ ...localNote, files: [...(localNote.files ?? []), ...metaEntries] });
+      }
+
+      // Replace temp placeholders with the real local entries in React state.
+      setNotes((prev) =>
+        prev.map((note) => {
+          if (note.id !== noteIdSnapshot) return note;
+          const nonTemp = note.uploads.filter((u) => !(typeof u.id === "number" && u.id < 0));
+          return { ...note, uploads: [...localItems, ...nonTemp] };
+        })
+      );
+      return;
+    }
+    // ── END LOCAL-FIRST PATH ──────────────────────────────────────────────────
+
     // Step 2: Perform the actual upload(s).
     let uploaded: BackendFile[];
     try {
@@ -1327,6 +1406,34 @@ export default function App() {
 
   const handleRemoveUpload = async (fileId: string | number) => {
     if (!authToken || !selectedNote) return;
+
+    // ── LOCAL-FIRST PATH ──────────────────────────────────────────────────────
+    if (authToken === "local-offline-session-token") {
+      try {
+        // Remove the blob from IndexedDB (best-effort — string IDs are local UUIDs).
+        if (typeof fileId === "string") {
+          await deleteLocalAttachmentBlob(fileId);
+        }
+        // Remove the metadata from the local note.
+        const localNote = await getLocalNote(String(selectedNote.id));
+        if (localNote) {
+          const updatedFiles = (localNote.files ?? []).filter((f: any) => f.id !== fileId);
+          await lnsUpdateNote({ ...localNote, files: updatedFiles });
+        }
+        setNotes((prev) =>
+          prev.map((note) =>
+            note.id === selectedNote.id
+              ? { ...note, uploads: note.uploads.filter((upload) => upload.id !== fileId) }
+              : note,
+          ),
+        );
+      } catch (error) {
+        console.error("Failed to remove local attachment", error);
+      }
+      return;
+    }
+    // ── END LOCAL-FIRST PATH ──────────────────────────────────────────────────
+
     try {
       await removeFile(authToken, fileId as any);
       setNotes((prev) =>
