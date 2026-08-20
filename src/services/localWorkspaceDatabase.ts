@@ -7,7 +7,7 @@ export interface LocalWorkspace {
 }
 
 const DATABASE_NAME = "aymo_local";
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 const ACTIVE_WORKSPACE_KEY = "activeWorkspaceId";
 const ACTIVE_WORKSPACE_STORAGE_KEY = "aymo.activeWorkspaceId";
 

@@ -1320,45 +1320,68 @@ export default function App() {
     // Each file is stored as a raw Blob in IndexedDB and an Object URL is
     // created so the media player / PDF viewer can render it immediately.
     if (authToken === "local-offline-session-token") {
-      const localItems: UploadedItem[] = [];
-      const workspaceId = String(selectedNote.id);
-      for (const file of Array.from(files)) {
-        const fileId = crypto.randomUUID();
-        await putLocalAttachmentBlob(fileId, workspaceId, file);
-        const objectUrl = URL.createObjectURL(file);
-        localItems.push({
-          id: fileId,
-          name: file.name,
-          kind: detectUploadKind(file.name),
-          sizeLabel: bytesToLabel(file.size),
-          source: objectUrl,
-          addedAt: noteLabels.justNow,
-          extractionStatus: "completed",
-        });
-      }
+      try {
+        const localItems: UploadedItem[] = [];
+        const workspaceId = String(selectedNote.id);
+        for (const file of Array.from(files)) {
+          const fileId = crypto.randomUUID();
+          // Store blob in IndexedDB — may fail if attachmentBlobs store is missing
+          // (e.g. old v2 db that predates this store). The Object URL still works
+          // for this session; blobs just won't survive a page reload in that case.
+          try {
+            await putLocalAttachmentBlob(fileId, workspaceId, file);
+          } catch (blobErr) {
+            console.error("[AYMO] putLocalAttachmentBlob failed — attachmentBlobs store may be missing. DB version bump will fix on next reload.", blobErr);
+          }
+          const objectUrl = URL.createObjectURL(file);
+          localItems.push({
+            id: fileId,
+            name: file.name,
+            kind: detectUploadKind(file.name),
+            sizeLabel: bytesToLabel(file.size),
+            source: objectUrl,
+            addedAt: noteLabels.justNow,
+            extractionStatus: "completed",
+          });
+        }
 
-      // Persist file metadata on the local note (no Blob/Object URL — only serialisable fields).
-      const localNote = await getLocalNote(String(selectedNote.id));
-      if (localNote) {
-        const metaEntries = localItems.map((item) => ({
-          id: item.id,
-          name: item.name,
-          kind: item.kind,
-          sizeLabel: item.sizeLabel,
-          addedAt: item.addedAt,
-          extractionStatus: item.extractionStatus,
-        }));
-        await lnsUpdateNote({ ...localNote, files: [...(localNote.files ?? []), ...metaEntries] });
-      }
+        // Persist file metadata on the local note (no Blob/Object URL — only serialisable fields).
+        try {
+          const localNote = await getLocalNote(String(selectedNote.id));
+          if (localNote) {
+            const metaEntries = localItems.map((item) => ({
+              id: item.id,
+              name: item.name,
+              kind: item.kind,
+              sizeLabel: item.sizeLabel,
+              addedAt: item.addedAt,
+              extractionStatus: item.extractionStatus,
+            }));
+            await lnsUpdateNote({ ...localNote, files: [...(localNote.files ?? []), ...metaEntries] });
+          }
+        } catch (metaErr) {
+          console.error("[AYMO] Failed to save file metadata to local note:", metaErr);
+        }
 
-      // Replace temp placeholders with the real local entries in React state.
-      setNotes((prev) =>
-        prev.map((note) => {
-          if (note.id !== noteIdSnapshot) return note;
-          const nonTemp = note.uploads.filter((u) => !(typeof u.id === "number" && u.id < 0));
-          return { ...note, uploads: [...localItems, ...nonTemp] };
-        })
-      );
+        // Replace temp placeholders with the real local entries in React state.
+        setNotes((prev) =>
+          prev.map((note) => {
+            if (note.id !== noteIdSnapshot) return note;
+            const nonTemp = note.uploads.filter((u) => !(typeof u.id === "number" && u.id < 0));
+            return { ...note, uploads: [...localItems, ...nonTemp] };
+          })
+        );
+      } catch (err) {
+        // Last-resort: clear the stuck temp items so the UI doesn't hang
+        console.error("[AYMO] Local upload failed entirely:", err);
+        setNotes((prev) =>
+          prev.map((note) => {
+            if (note.id !== noteIdSnapshot) return note;
+            return { ...note, uploads: note.uploads.filter((u) => !(typeof u.id === "number" && u.id < 0)) };
+          })
+        );
+        window.alert("Could not save the attachment locally. Please reload the page and try again.");
+      }
       return;
     }
     // ── END LOCAL-FIRST PATH ──────────────────────────────────────────────────
