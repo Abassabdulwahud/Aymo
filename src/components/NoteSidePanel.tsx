@@ -142,6 +142,17 @@ export function NoteSidePanel({
         return;
       }
 
+      // ── Local blob: URLs — use directly, no network fetch needed ──────────
+      // These are Object URLs recreated from IndexedDB blobs on workspace load.
+      if (selectedUpload.source.startsWith("blob:")) {
+        if (!isCancelled) {
+          setPreviewUrl(selectedUpload.source);
+          setPreviewError(null);
+        }
+        return;
+      }
+      // ── End local short-circuit ────────────────────────────────────────────
+
       try {
         const response = await fetch(selectedUpload.source);
         if (!response.ok) {
