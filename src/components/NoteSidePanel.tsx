@@ -1,9 +1,9 @@
 import { DragEvent, useEffect, useMemo, useState } from "react";
-import { FileText, Link, Plus, Trash2, CheckCircle2, Loader2, Circle, XCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { FileText, Link, Plus, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { useI18n } from "../i18n";
 import { AIProvider, ChatMessage, UploadedItem } from "../types";
 import { AIAssistantPanel } from "./AIAssistantPanel";
-import { PdfCanvasViewer } from "./PdfCanvasViewer";
+import { LocalMediaViewer } from "./LocalMediaViewer";
 
 export type RightTab = "uploads" | "viewer" | "assistant";
 
@@ -47,26 +47,15 @@ interface NoteSidePanelProps {
 
 import { SelectionMenuAction } from "./SelectionContextMenu";
 import { Annotation, BoundingRect } from "../types";
-import { AnnotationsPanel } from "./AnnotationsPanel";
-
 
 function detectViewerKind(upload: UploadedItem): "image" | "pdf" | "document" | "video" | "audio" | "link" {
-  const source = `${upload.source ?? ""} ${upload.name}`.toLowerCase();
-  if (/\.(png|jpe?g|gif|webp|bmp|svg)\b/.test(source)) return "image";
+  const name = upload.name.toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|bmp|svg)\b/.test(name)) return "image";
   if (upload.kind === "video") return "video";
   if (upload.kind === "audio") return "audio";
   if (upload.kind === "link") return "link";
-  if (upload.kind === "pdf" || /\.pdf\b/.test(source)) return "pdf";
+  if (upload.kind === "pdf" || /\.pdf\b/.test(name)) return "pdf";
   return "document";
-}
-
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) {
-    return `${h}h ${m}m`;
-  }
-  return `${m}m`;
 }
 
 export function NoteSidePanel({
@@ -81,7 +70,7 @@ export function NoteSidePanel({
   onFileUpload,
   onAddLink,
   onRemoveUpload,
-  selectedNoteId,
+  selectedNoteId: _selectedNoteId,
   annotations,
   flashAnnotationId,
   jumpToPage,
@@ -97,19 +86,23 @@ export function NoteSidePanel({
   onSearchGoogle,
 }: NoteSidePanelProps) {
   const { t } = useI18n();
-  const [selectedUploadId, setSelectedUploadId] = useState<string | number | null>(uploads[0]?.id ?? null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  // ── State ───────────────────────────────────────────────────────────────────
+  const [selectedUploadId, setSelectedUploadId] = useState<string | number | null>(
+    uploads[0]?.id ?? null,
+  );
   const [isDragging, setIsDragging] = useState(false);
-  const [expandedSteps, setExpandedSteps] = useState<Record<string | number, boolean>>({});
   const [showAnnotationsPanel, setShowAnnotationsPanel] = useState(false);
+  const [isHeaderExpanded, setIsHeaderExpanded] = useState<boolean>(() => {
+    try {
+      const persisted = sessionStorage.getItem("aymo_file_viewer_header_expanded");
+      return persisted !== null ? JSON.parse(persisted) : true;
+    } catch {
+      return true;
+    }
+  });
 
-  const toggleStepsExpanded = (id: string | number) => {
-    setExpandedSteps((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
-
-
-
+  // ── Keep selectedUploadId in sync when uploads list changes ────────────────
   useEffect(() => {
     setSelectedUploadId((current) => {
       if (current && uploads.some((upload) => upload.id === current)) {
@@ -119,71 +112,13 @@ export function NoteSidePanel({
     });
   }, [uploads]);
 
+  // ── Derived ─────────────────────────────────────────────────────────────────
   const selectedUpload = useMemo(
     () => uploads.find((upload) => upload.id === selectedUploadId) ?? uploads[0] ?? null,
     [selectedUploadId, uploads],
   );
 
-  useEffect(() => {
-    let isCancelled = false;
-    let objectUrl: string | null = null;
-
-    const loadPreview = async () => {
-      if (!selectedUpload?.source) {
-        setPreviewUrl(null);
-        setPreviewError(null);
-        return;
-      }
-
-      // ── Local blob: URLs — set synchronously, no fetch needed ─────────────
-      // These are Object URLs created from the File object at upload time or
-      // recreated from IndexedDB blobs during workspace hydration.
-      // Setting previewUrl synchronously avoids any race with the async path.
-      if (selectedUpload.source.startsWith("blob:")) {
-        if (!isCancelled) {
-          setPreviewUrl(selectedUpload.source);
-          setPreviewError(null);
-        }
-        return;
-      }
-      // ── End local short-circuit ────────────────────────────────────────────
-
-      const viewerKind = detectViewerKind(selectedUpload);
-      if (!["image", "pdf", "video", "audio"].includes(viewerKind)) {
-        setPreviewUrl(selectedUpload.source);
-        setPreviewError(null);
-        return;
-      }
-
-      try {
-        const response = await fetch(selectedUpload.source);
-        if (!response.ok) {
-          throw new Error("Preview could not be loaded.");
-        }
-        const blob = await response.blob();
-        objectUrl = URL.createObjectURL(blob);
-        if (!isCancelled) {
-          setPreviewUrl(objectUrl);
-          setPreviewError(null);
-        }
-      } catch {
-        if (!isCancelled) {
-          setPreviewUrl(selectedUpload.source);
-          setPreviewError(null);
-        }
-      }
-    };
-
-    void loadPreview();
-
-    return () => {
-      isCancelled = true;
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [selectedUpload, t]);
-
+  // ── Handlers ────────────────────────────────────────────────────────────────
   const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
     event.preventDefault();
     setIsDragging(false);
@@ -195,6 +130,19 @@ export function NoteSidePanel({
     onTabChange("viewer");
   };
 
+  const toggleHeaderExpansion = () => {
+    setIsHeaderExpanded((prev) => {
+      const next = !prev;
+      try {
+        sessionStorage.setItem("aymo_file_viewer_header_expanded", JSON.stringify(next));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+  };
+
+  // ── Renders ─────────────────────────────────────────────────────────────────
   const renderUploads = () => (
     <div className="tab-panel-body uploads-view">
       <div className="upload-head">
@@ -254,27 +202,6 @@ export function NoteSidePanel({
     </div>
   );
 
-  const [isHeaderExpanded, setIsHeaderExpanded] = useState<boolean>(() => {
-    try {
-      const persisted = sessionStorage.getItem("aymo_file_viewer_header_expanded");
-      return persisted !== null ? JSON.parse(persisted) : true; // Default to expanded (true)
-    } catch {
-      return true;
-    }
-  });
-
-  const toggleHeaderExpansion = () => {
-    setIsHeaderExpanded((prev) => {
-      const next = !prev;
-      try {
-        sessionStorage.setItem("aymo_file_viewer_header_expanded", JSON.stringify(next));
-      } catch (e) {
-        console.error(e);
-      }
-      return next;
-    });
-  };
-
   const renderViewer = () => {
     if (!selectedUpload) {
       return <div className="assistant-empty">{t("viewer.selectFile")}</div>;
@@ -284,8 +211,8 @@ export function NoteSidePanel({
 
     return (
       <div className="file-viewer-shell" style={{ gap: isHeaderExpanded ? "18px" : "4px" }}>
+        {/* ── Header ────────────────────────────────────────────────────────── */}
         <div className="file-viewer-head" style={{ padding: "0 2px" }}>
-          {/* Persistent Action Bar: collapse toggle and delete button */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, paddingBottom: 4 }}>
             {viewerKind === "pdf" && (
               <button
@@ -313,7 +240,7 @@ export function NoteSidePanel({
             </button>
           </div>
 
-          {/* Collapsible Meta & Filename Area */}
+          {/* Collapsible meta area */}
           <div
             style={{
               maxHeight: isHeaderExpanded ? "300px" : "0px",
@@ -322,7 +249,7 @@ export function NoteSidePanel({
               opacity: isHeaderExpanded ? 1 : 0,
               display: "flex",
               flexDirection: "column",
-              gap: 12
+              gap: 12,
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12 }}>
@@ -331,96 +258,32 @@ export function NoteSidePanel({
                 <h3 style={{ margin: 0, fontSize: "22px", wordBreak: "break-word" }}>{selectedUpload.name}</h3>
                 <p className="file-subtext" style={{ margin: 0 }}>{t("uploads.added")} {selectedUpload.addedAt}</p>
               </div>
-              <div className="file-viewer-actions" style={{ flexShrink: 0 }}>
-                {selectedUpload.source ? (
-                  <a className="text-action" href={selectedUpload.source} target="_blank" rel="noreferrer">
-                    {t("viewer.openSource")}
-                  </a>
-                ) : null}
-              </div>
             </div>
             <div style={{ borderBottom: "1px solid var(--border)", margin: "4px 0" }} />
           </div>
         </div>
 
+        {/* ── Viewer surface — LocalMediaViewer fetches blob from IndexedDB ── */}
         <div className="file-viewer-surface">
-          {/* effectiveUrl: prefer previewUrl (fetched/validated), fall back to the
-              raw source URL (blob: or CDN URL) so the viewer never goes blank
-              due to a loadPreview race condition or async delay. */}
-          {(() => {
-            const effectiveUrl = previewUrl ?? selectedUpload.source ?? null;
-            return (
-              <>
-                {viewerKind === "image" && effectiveUrl ? <img className="file-preview-image" src={effectiveUrl} alt={selectedUpload.name} /> : null}
-                {viewerKind === "video" && effectiveUrl ? (
-                  <div className="media-preview-container">
-                    <video className="file-preview-media" src={effectiveUrl} controls />
-                  </div>
-                ) : null}
-                {viewerKind === "audio" && effectiveUrl ? (
-                  <div className="media-preview-container">
-                    <audio className="file-preview-audio" src={effectiveUrl} controls />
-                  </div>
-                ) : null}
-                {viewerKind === "link" ? (
-                  <div className="file-link-preview">
-                    <p>{selectedUpload.source ?? t("viewer.noLink")}</p>
-                    {selectedUpload.source ? (
-                      <a className="text-action" href={selectedUpload.source} target="_blank" rel="noreferrer">
-                        {t("viewer.openLink")}
-                      </a>
-                    ) : null}
-                  </div>
-                ) : null}
-                {viewerKind === "pdf" && effectiveUrl ? (
-                  <div className="pdf-viewer-stage-container" style={{ display: "flex", width: "100%", height: "100%", position: "relative" }}>
-                    <div className="pdf-viewer-stage" style={{ flexGrow: 1, minWidth: 0 }}>
-                      <PdfCanvasViewer
-                        source={effectiveUrl}
-                        sourceId={selectedUpload.id}
-                        annotations={annotations.filter((a) => a.source_id === selectedUpload.id)}
-                        flashAnnotationId={flashAnnotationId}
-                        jumpToPage={jumpToPage}
-                        onAnnotationCreate={onAnnotationCreate}
-                        onAskAI={onAskAI}
-                        onCopyText={onCopyText}
-                        onSearchGoogle={onSearchGoogle}
-                        onCreateNote={onCreateNoteFromAnnotation}
-                        onAppendToNote={onAppendNoteFromAnnotation}
-                      />
-                    </div>
-                    {showAnnotationsPanel && (
-                      <AnnotationsPanel
-                        annotations={annotations.filter((a) => a.source_id === selectedUpload.id)}
-                        onJumpToPage={(pIndex) => onJumpToPage(pIndex)}
-                        onFlash={(id) => onFlash(id)}
-                        onDelete={onDeleteAnnotation}
-                        onUpdateComment={onUpdateAnnotationComment}
-                        onCreateNote={(a) => onCreateNoteFromAnnotation(a.selected_text, (a.page_number ?? 0) + 1)}
-                        onAppendToNote={(a) => onAppendNoteFromAnnotation(a.selected_text, (a.page_number ?? 0) + 1)}
-                        onClose={() => setShowAnnotationsPanel(false)}
-                      />
-                    )}
-                  </div>
-                ) : null}
-              </>
-            );
-          })()}
-          {viewerKind === "document" ? (
-            <div className="file-preview-fallback">
-              <p>{t("viewer.documentInlineUnsupported")}</p>
-              {selectedUpload.source ? (
-                <a className="text-action" href={selectedUpload.source} target="_blank" rel="noreferrer">
-                  {t("viewer.openDocument")}
-                </a>
-              ) : null}
-            </div>
-          ) : null}
-          {previewError ? (
-            <div className="file-preview-fallback">
-              <p>{previewError}</p>
-            </div>
-          ) : null}
+          <LocalMediaViewer
+            upload={selectedUpload}
+            viewerKind={viewerKind}
+            annotations={annotations}
+            flashAnnotationId={flashAnnotationId}
+            jumpToPage={jumpToPage}
+            showAnnotationsPanel={showAnnotationsPanel}
+            onAnnotationCreate={onAnnotationCreate}
+            onJumpToPage={onJumpToPage}
+            onFlash={onFlash}
+            onDeleteAnnotation={onDeleteAnnotation}
+            onUpdateAnnotationComment={onUpdateAnnotationComment}
+            onCreateNoteFromAnnotation={onCreateNoteFromAnnotation}
+            onAppendNoteFromAnnotation={onAppendNoteFromAnnotation}
+            onAskAI={onAskAI}
+            onCopyText={onCopyText}
+            onSearchGoogle={onSearchGoogle}
+            onCloseAnnotationsPanel={() => setShowAnnotationsPanel(false)}
+          />
         </div>
       </div>
     );

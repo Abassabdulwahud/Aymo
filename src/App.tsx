@@ -66,6 +66,11 @@ import {
   toggleNotePin as lnsToggleNotePin,
   permanentlyDeleteNote as lnsPermanentlyDeleteNote,
 } from "./services/localNotesService";
+import {
+  saveLocalAttachment,
+  deleteLocalAttachmentById,
+  detectAttachmentKind,
+} from "./services/localAttachmentService";
 import { WorkspaceHealthPanel } from "./components/WorkspaceHealthPanel";
 import { syncService } from "./services/syncService";
 import { MongoDBAdapter } from "./services/mongoDbAdapter";
@@ -1317,29 +1322,18 @@ export default function App() {
 
     // ── LOCAL-FIRST PATH ─────────────────────────────────────────────────────
     // When offline (or explicitly in local-only mode), skip the REST API call.
-    // Each file is stored as a raw Blob in IndexedDB and an Object URL is
-    // created so the media player / PDF viewer can render it immediately.
+    // Each file is stored as a raw Blob in IndexedDB and resolved on-demand.
     if (authToken === "local-offline-session-token") {
       try {
         const localItems: UploadedItem[] = [];
-        const workspaceId = String(selectedNote.id);
+        const workspaceId = await getActiveWorkspaceId() || "";
         for (const file of Array.from(files)) {
-          const fileId = crypto.randomUUID();
-          // Store blob in IndexedDB — may fail if attachmentBlobs store is missing
-          // (e.g. old v2 db that predates this store). The Object URL still works
-          // for this session; blobs just won't survive a page reload in that case.
-          try {
-            await putLocalAttachmentBlob(fileId, workspaceId, file);
-          } catch (blobErr) {
-            console.error("[AYMO] putLocalAttachmentBlob failed — attachmentBlobs store may be missing. DB version bump will fix on next reload.", blobErr);
-          }
-          const objectUrl = URL.createObjectURL(file);
+          const meta = await saveLocalAttachment(file, String(selectedNote.id), workspaceId);
           localItems.push({
-            id: fileId,
-            name: file.name,
-            kind: detectUploadKind(file.name),
-            sizeLabel: bytesToLabel(file.size),
-            source: objectUrl,
+            id: meta.id,
+            name: meta.fileName,
+            kind: meta.kind,
+            sizeLabel: meta.sizeLabel,
             addedAt: noteLabels.justNow,
             extractionStatus: "completed",
           });
@@ -1456,7 +1450,7 @@ export default function App() {
       try {
         // Remove the blob from IndexedDB (best-effort — string IDs are local UUIDs).
         if (typeof fileId === "string") {
-          await deleteLocalAttachmentBlob(fileId);
+          await deleteLocalAttachmentById(fileId);
         }
         // Remove the metadata from the local note.
         const localNote = await getLocalNote(String(selectedNote.id));
