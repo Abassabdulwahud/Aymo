@@ -5164,3 +5164,64 @@ body.page-note-view .theme-root.theme-dark ::selection {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ── Rebuilt Local Media Viewer Styles ─────────────────────────────────── */
+.media-preview-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.media-preview-container.audio-preview-container {
+  background: transparent;
+  min-height: auto;
+  padding: 16px 8px;
+}
+
+.image-preview-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.media-loading-state,
+.media-error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+  padding: 24px;
+  text-align: center;
+  gap: 12px;
+}
+
+.media-loading-spinner {
+  animation: spin 1s linear infinite;
+  color: var(--focus-ring);
+}
+
+.media-error-state p {
+  margin: 0;
+  font-size: 14px;
+  color: #ef4444;
+  line-height: 1.5;
+}
+
+.media-codec-error {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
