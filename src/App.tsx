@@ -1809,7 +1809,6 @@ export default function App() {
     <div className={`site-shell note-shell ${isRightPanelCollapsed ? "is-right-panel-collapsed" : ""}`}>
       <header className="note-topbar">
         <div className="note-topbar-left">
-          <AymoLogo variant="icon" size="small" darkMode={darkMode} />
           <button className="btn" onClick={() => navigate("/home")}>{t("app.back")}</button>
         </div>
         <div className="note-topbar-divider" aria-hidden="true" />
