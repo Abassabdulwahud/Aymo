@@ -2707,11 +2707,25 @@ body.page-note-view .panel,
 body.page-note-view .writing-panel,
 body.page-note-view .right-tabs-panel,
 body.page-note-view .assistant-panel,
+body.page-note-view .note-workspace,
+body.page-note-view .note-split-pane,
+body.page-note-view .note-split-pane-left,
+body.page-note-view .note-split-pane-right,
+body.page-note-view .note-editor-column,
+body.page-note-view .note-side-column,
+body.page-note-view .note-side-sticky,
+body.page-note-view .writing-document-scroll,
+body.page-note-view .writing-document,
+body.page-note-view .writing-utility-bar,
+body.page-note-view .right-tab-content,
+body.page-note-view .tab-panel-body,
 body.page-note-view .theme-root.theme-dark .writing-panel,
-body.page-note-view .theme-root.theme-dark .right-tabs-panel {
+body.page-note-view .theme-root.theme-dark .right-tabs-panel,
+body.page-note-view .theme-root.theme-dark .note-split-pane-right,
+body.page-note-view .theme-root.theme-dark .assistant-panel {
   border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
 body.page-note-view .writing-panel {
