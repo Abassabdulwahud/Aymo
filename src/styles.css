@@ -2600,7 +2600,7 @@ body.page-note-view .note-split-pane-right {
   flex: 0 0 var(--note-right-panel-width, 42%);
   width: auto;
   min-width: 360px;
-  background: var(--soft);
+  background: color-mix(in srgb, var(--bg) 96%, var(--text) 4%);
 }
 
 body.page-note-view .note-split-pane.is-collapsed .note-split-pane-left {
@@ -2638,12 +2638,12 @@ body.page-note-view .note-split-divider::before {
   left: 50%;
   width: 1px;
   transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.09);
   transition: background-color 160ms ease;
 }
 
 body.page-note-view .theme-root.theme-dark .note-split-divider::before {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.11);
 }
 
 body.page-note-view .note-split-divider:hover,
@@ -2740,7 +2740,7 @@ body.page-note-view .writing-document-scroll {
 body.page-note-view .writing-document {
   width: 100%;
   min-height: 100%;
-  padding: 64px clamp(32px, 6vw, 84px) 140px;
+  padding: 48px clamp(32px, 6vw, 84px) 140px;
   box-sizing: border-box;
   background: transparent;
   box-shadow: none;
@@ -2777,7 +2777,7 @@ body.page-note-view .theme-root.theme-dark .editor {
 body.page-note-view .title-input {
   display: block;
   width: 100%;
-  margin: 0 0 32px;
+  margin: 0 0 24px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -2991,7 +2991,7 @@ body.page-note-view .writing-utility-bar {
   min-height: 68px;
   padding: 14px clamp(32px, 6vw, 84px);
   border-top: 1px solid rgba(0, 0, 0, 0.05);
-  background: #ffffff;
+  background: #fafafa;
   color: var(--text);
 }
 
@@ -3021,8 +3021,8 @@ body.page-note-view .right-tabs-panel {
   flex: 1;
   min-height: 0;
   height: 100%;
-  padding: 34px clamp(22px, 3vw, 40px) 24px;
-  background: var(--soft);
+  padding: 20px clamp(22px, 3vw, 40px) 24px;
+  background: color-mix(in srgb, var(--bg) 96%, var(--text) 4%);
   color: var(--text);
   overflow: hidden;
 }
@@ -3042,7 +3042,7 @@ body.page-note-view .tab-panel-body {
 }
 
 body.page-note-view .uploads-view {
-  gap: 28px;
+  gap: 20px;
 }
 
 body.page-note-view .upload-head,
@@ -3058,7 +3058,8 @@ body.page-note-view .file-viewer-head {
 body.page-note-view .upload-head h2,
 body.page-note-view .file-viewer-head h3 {
   margin: 0;
-  font-size: 24px;
+  font-size: 19px;
+  font-weight: 600;
   line-height: 1.2;
   word-break: break-word;
 }
