@@ -363,6 +363,11 @@ export default function App() {
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const editorSelectionRef = useRef({ start: 0, end: 0 });
   const lastSyncedRef = useRef<Record<string | number, { title: string; body: string }>>({});
+  // Tracks whether there is an outstanding autosave that has not yet been
+  // committed to IndexedDB. Set to true when the debounce timer starts, cleared
+  // once persistCurrentNote() resolves. The Back handler reads this to decide
+  // whether to await a final flush before navigating away.
+  const pendingSaveRef = useRef<boolean>(false);
   const queuedExtractionRef = useRef<Record<string | number, true>>({});
   // Tracks the IDs of files that we just uploaded. Polling is suppressed for
   // these entries until the backend confirms them (they flip to a real positive ID).
@@ -1006,8 +1011,11 @@ export default function App() {
       return;
     }
 
+    pendingSaveRef.current = true;
     const timeoutId = window.setTimeout(() => {
-      void persistCurrentNote();
+      void persistCurrentNote().finally(() => {
+        pendingSaveRef.current = false;
+      });
     }, 1500); // Save quickly on local pauses (1.5 seconds)
 
     return () => {
@@ -1809,7 +1817,20 @@ export default function App() {
     <div className={`site-shell note-shell ${isRightPanelCollapsed ? "is-right-panel-collapsed" : ""}`}>
       <header className="note-topbar">
         <div className="note-topbar-left">
-          <button className="btn" onClick={() => navigate("/home")}>{t("app.back")}</button>
+          <button
+            className="btn"
+            onClick={async () => {
+              // Flush any pending autosave before leaving so the latest
+              // changes are never lost when the user presses Back quickly.
+              if (pendingSaveRef.current) {
+                await persistCurrentNote();
+                pendingSaveRef.current = false;
+              }
+              navigate("/home");
+            }}
+          >
+            {t("app.back")}
+          </button>
         </div>
         <div className="note-topbar-divider" aria-hidden="true" />
         <div className="topbar-actions">
@@ -1850,8 +1871,6 @@ export default function App() {
             </button>
           ) : null}
           <div className="note-topbar-buttons">
-            <button className="btn" onClick={() => window.alert(t("app.shareCopied"))}>{t("app.share")}</button>
-            <button className="btn btn-solid" onClick={() => void persistCurrentNote()}>{t("app.save")}</button>
             <AccountSettingsMenu
               name={profile.name}
               email={profile.email}
