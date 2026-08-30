@@ -2312,7 +2312,7 @@ body.page-note-view .note-topbar {
   z-index: 20;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 8px minmax(360px, var(--note-right-panel-width, 42%));
-  height: 44px;
+  height: 42px;
   margin: 0;
   padding: 0;
   background: var(--bg);
@@ -2564,8 +2564,8 @@ body.page-note-view .theme-root.theme-dark .tab-chip:hover {
 }
 
 body.page-note-view .note-workspace {
-  height: calc(100vh - 44px);
-  margin-top: 44px;
+  height: calc(100vh - 42px);
+  margin-top: 42px;
   overflow: hidden;
   background: var(--bg);
 }
@@ -2573,7 +2573,7 @@ body.page-note-view .note-workspace {
 body.page-note-view .note-split-pane {
   display: flex;
   flex-direction: row;
-  height: calc(100vh - 44px);
+  height: calc(100vh - 42px);
   width: 100%;
   min-height: 0;
   overflow: hidden;
