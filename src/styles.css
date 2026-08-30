@@ -2312,7 +2312,7 @@ body.page-note-view .note-topbar {
   z-index: 20;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 8px minmax(360px, var(--note-right-panel-width, 42%));
-  height: 48px;
+  height: 40px;
   margin: 0;
   padding: 0;
   background: var(--bg);
@@ -2397,8 +2397,8 @@ body.page-note-view .note-panel-collapse-button,
 body.page-note-view .note-panel-reopen-button {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   padding: 0;
   cursor: pointer;
@@ -2465,7 +2465,7 @@ body.page-note-view .tab-chip {
 
 body.page-note-view .btn {
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 4px 10px;
 }
 
 body.page-note-view .btn:hover,
@@ -2564,8 +2564,8 @@ body.page-note-view .theme-root.theme-dark .tab-chip:hover {
 }
 
 body.page-note-view .note-workspace {
-  height: calc(100vh - 48px);
-  margin-top: 48px;
+  height: calc(100vh - 40px);
+  margin-top: 40px;
   overflow: hidden;
   background: var(--bg);
 }
@@ -2573,7 +2573,7 @@ body.page-note-view .note-workspace {
 body.page-note-view .note-split-pane {
   display: flex;
   flex-direction: row;
-  height: calc(100vh - 48px);
+  height: calc(100vh - 40px);
   width: 100%;
   min-height: 0;
   overflow: hidden;

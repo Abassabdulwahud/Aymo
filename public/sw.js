@@ -2,7 +2,7 @@
 // Strategy: Cache-First for assets, App-Shell for navigation.
 // The app shell (index.html) is served from cache so AYMO loads offline.
 
-const CACHE_NAME = "aymo-shell-v8";
+const CACHE_NAME = "aymo-shell-v9";
 
 // Files to pre-cache on install.
 // index.html is the only guaranteed stable path at build time.
