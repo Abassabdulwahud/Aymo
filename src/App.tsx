@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import "./styles.css";
 import { useRef } from "react";
 import { SmoothStreamer } from "./utils/smoothStreamer";
-import { MoreVertical, PanelRightClose } from "lucide-react";
+import { ArrowLeft, FileText, MoreVertical, PanelRightClose, Plus } from "lucide-react";
 import { matchPath, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "./services/apiClient";
 import { LanguageCode, languageCodeToSpeechLocale, normalizeLanguageCode, useI18n } from "./i18n";
@@ -11,6 +11,7 @@ import { NoteSidePanel, RightTab } from "./components/NoteSidePanel";
 import { AuthPage } from "./components/AuthPage";
 import { AymoLogo } from "./components/AymoLogo";
 import { ResizableNoteWorkspace } from "./components/ResizableNoteWorkspace";
+import { AskAIIcon } from "./components/AskAIIcon";
 import { AccountSettingsMenu } from "./components/AccountSettingsMenu";
 import { AIProvider, ChatMessage, UploadKind, UploadedItem } from "./types";
 import { loadPreferences, savePreferences } from "./services/preferencesService";
@@ -1829,7 +1830,8 @@ export default function App() {
               navigate("/home");
             }}
           >
-            {t("app.back")}
+            <ArrowLeft size={16} strokeWidth={2} />
+            <span>{t("app.back")}</span>
           </button>
         </div>
         <div className="note-topbar-divider" aria-hidden="true" />
@@ -1840,21 +1842,24 @@ export default function App() {
               type="button"
               onClick={() => setActiveRightTab("uploads")}
             >
-              {t("tab.uploads")}
+              <Plus size={16} strokeWidth={2} />
+              <span>{t("tab.uploads")}</span>
             </button>
             <button
               className={`tab-chip ${activeRightTab === "viewer" ? "active" : ""}`}
               type="button"
               onClick={() => setActiveRightTab("viewer")}
             >
-              {t("tab.viewer")}
+              <FileText size={16} strokeWidth={2} />
+              <span>{t("tab.viewer")}</span>
             </button>
             <button
               className={`tab-chip ${activeRightTab === "assistant" ? "active" : ""}`}
               type="button"
               onClick={() => setActiveRightTab("assistant")}
             >
-              {t("tab.assistant")}
+              <AskAIIcon size={16} strokeWidth={2} />
+              <span>{t("tab.assistant")}</span>
             </button>
           </div>
           {!isRightPanelCollapsed ? (

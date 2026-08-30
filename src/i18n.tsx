@@ -224,7 +224,7 @@ const TRANSLATIONS: Record<LanguageCode, Partial<Record<TranslationKey, string>>
     "auth.hide": "Hide",
     "tab.uploads": "Uploads",
     "tab.viewer": "File Viewer",
-    "tab.assistant": "AI Assistant",
+    "tab.assistant": "Ask AI",
     "uploads.count": "items attached",
     "uploads.addLink": "Add Link",
     "uploads.dropHint": "Drag and drop files here, or click to browse.",
