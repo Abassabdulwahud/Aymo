@@ -117,13 +117,21 @@ async def warm_embedding_model():
     app.state.embedding_dimension = EMBEDDING_DIMENSION
 
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    from .mongodb import close_mongodb
+    await close_mongodb()
+
+
 @app.get("/health")
 def health():
     from .mongodb import is_mongo_available
     return {
         "status": "ok",
         "environment": settings.app_env,
-        "mongodb": "connected" if is_mongo_available() else "disconnected"
+        "mongodb": "connected" if is_mongo_available() else "disconnected",
+        "storage": settings.file_storage_provider,
+        "task_orchestrator": settings.task_orchestrator_provider,
     }
 
 @app.get("/debug/db")

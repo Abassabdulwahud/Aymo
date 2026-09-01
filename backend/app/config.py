@@ -75,6 +75,7 @@ class Settings:
     cloudinary_api_secret: Optional[str]
     cloudinary_folder: Optional[str]
     mongodb_url: Optional[str]
+    task_orchestrator_provider: str
 
 
 
@@ -155,5 +156,6 @@ def get_settings() -> Settings:
         cloudinary_api_secret=os.getenv("CLOUDINARY_API_SECRET"),
         cloudinary_folder=os.getenv("CLOUDINARY_FOLDER", "aymo"),
         mongodb_url=os.getenv("MONGODB_URL"),
+        task_orchestrator_provider=os.getenv("TASK_ORCHESTRATOR_PROVIDER", "background_tasks").strip().lower(),
     )
 
