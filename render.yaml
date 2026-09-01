@@ -15,8 +15,11 @@ services:
       - key: APP_ENV
         value: production
 
+      - key: TASK_ORCHESTRATOR_PROVIDER
+        value: background_tasks
+
       - key: DATABASE_URL
-        value: sqlite:////data/aymo.db
+        value: sqlite:///./aymo.db
 
       - key: TRANSCRIPTION_PROVIDER
         value: openai
@@ -28,81 +31,18 @@ services:
       - key: UPLOADS_BASE_URL
         value: /uploads
 
-      - key: CELERY_TASK_ALWAYS_EAGER
-        value: "false"
-
-      # ── Redis — uncomment when aymo-redis service is set up ───────────────
-      # - key: REDIS_URL
-      #   fromService:
-      #     name: aymo-redis
-      #     type: redis
-      #     property: connectionString
-      # - key: CELERY_BROKER_URL
-      #   fromService:
-      #     name: aymo-redis
-      #     type: redis
-      #     property: connectionString
-      # - key: CELERY_RESULT_BACKEND
-      #   fromService:
-      #     name: aymo-redis
-      #     type: redis
-      #     property: connectionString
-
-      # ── Secrets (set via Render Dashboard → Environment tab) ─────────────
+      # ── Secrets / Optional Cloud Services (configure in Render Dashboard) ─
+      # - key: MONGODB_URL
+      #   value: mongodb+srv://<username>:<password>@<cluster>.mongodb.net/aymo?retryWrites=true&w=majority
       # - key: JWT_SECRET_KEY
       #   value: <generate with: python -c "import secrets; print(secrets.token_urlsafe(48))">
+      # - key: CLOUDINARY_CLOUD_NAME
+      #   value: ...
+      # - key: CLOUDINARY_API_KEY
+      #   value: ...
+      # - key: CLOUDINARY_API_SECRET
+      #   value: ...
       # - key: OPENAI_API_KEY
       #   value: ...
       # - key: GEMINI_API_KEY
       #   value: ...
-      # - key: MONGODB_URL
-      #   value: ...
-
-    disk:
-      name: aymo-data
-      mountPath: /data
-      sizeGB: 1
-
-  # ─── Celery Worker ────────────────────────────────────────────────────────
-  - type: worker
-    name: aymo-celery-worker
-    runtime: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=1
-    plan: starter
-
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.11.11"
-      - key: APP_ENV
-        value: production
-      - key: DATABASE_URL
-        value: sqlite:////data/aymo.db
-      - key: CELERY_TASK_ALWAYS_EAGER
-        value: "false"
-      - key: TRANSCRIPTION_PROVIDER
-        value: openai
-      - key: TRANSCRIPTION_MODEL
-        value: whisper-1
-      - key: UPLOADS_DIR
-        value: /opt/render/project/src/uploads
-      - key: UPLOADS_BASE_URL
-        value: /uploads
-
-      # ── Redis — uncomment when aymo-redis service is set up ───────────────
-      # - key: REDIS_URL
-      #   fromService:
-      #     name: aymo-redis
-      #     type: redis
-      #     property: connectionString
-      # - key: CELERY_BROKER_URL
-      #   fromService:
-      #     name: aymo-redis
-      #     type: redis
-      #     property: connectionString
-      # - key: CELERY_RESULT_BACKEND
-      #   fromService:
-      #     name: aymo-redis
-      #     type: redis
-      #     property: connectionString
