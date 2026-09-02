@@ -102,8 +102,6 @@ def get_settings() -> Settings:
     app_env = os.getenv("APP_ENV", "development")
 
     database_url = os.getenv("DATABASE_URL", "").strip()
-    if app_env == "production" and (not database_url or database_url.startswith("postgres")):
-        database_url = "sqlite:////data/aymo.db"
 
     return Settings(
         app_name=os.getenv("APP_NAME", "AYMO Notebook API"),

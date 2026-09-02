@@ -7,10 +7,7 @@ from .config import get_settings
 
 settings = get_settings()
 
-if not settings.database_url:
-    raise RuntimeError("DATABASE_URL must be configured before starting the backend.")
-
-database_url = settings.database_url
+database_url = settings.database_url or "sqlite:///:memory:"
 engine_kwargs = {"pool_pre_ping": True}
 if database_url.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}

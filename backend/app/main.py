@@ -76,19 +76,19 @@ app.mount(settings.uploads_base_url, StaticFiles(directory=str(uploads_root.reso
 def run_migrations():
     import logging
     logger = logging.getLogger(__name__)
+    if settings.app_env == "production" or not settings.database_url:
+        logger.info("Production/cloud mode: Legacy SQL migrations skipped during startup.")
+        return
+
     try:
         from alembic.config import Config
         from alembic import command
 
-        # main.py is at backend/app/main.py
-        # parents[0] = backend/app/
-        # parents[1] = backend/          <-- alembic.ini lives here
         backend_dir = Path(__file__).resolve().parent.parent
         ini_path = backend_dir / "alembic.ini"
 
         logger.info(f"Running database migrations from {ini_path}")
         alembic_cfg = Config(str(ini_path))
-        # Ensure alembic script_location resolves relative to backend_dir
         alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
         command.upgrade(alembic_cfg, "head")
         logger.info("Database migrations applied successfully.")
