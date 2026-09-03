@@ -39,7 +39,7 @@ class ForgotPasswordResponse(BaseModel):
 
 
 class UserResponse(BaseModel):
-    id: int
+    id: str
     full_name: Optional[str] = None
     email: EmailStr
     preferred_ai_provider: Optional[str] = None

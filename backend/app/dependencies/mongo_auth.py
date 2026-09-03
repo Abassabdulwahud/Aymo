@@ -79,8 +79,9 @@ async def get_current_mongo_user(request: Request) -> AuthenticatedUser:
             detail="Cloud services are temporarily unavailable. Local notes continue working normally.",
         )
 
-    # Note: we query by email, not by any client-supplied ID
-    user_doc = await db.users.find_one({"email": email.lower().strip()})
+    from ..repositories.mongo_repository import UserMongoRepository
+    user_repo = UserMongoRepository(db)
+    user_doc = await user_repo.get_by_email(email)
     if not user_doc:
         # Valid JWT but user not found — account may have been deleted
         logger.warning(f"[AUTH] Valid JWT for email={email} but no user in MongoDB.")
@@ -90,8 +91,8 @@ async def get_current_mongo_user(request: Request) -> AuthenticatedUser:
         )
 
     return AuthenticatedUser(
-        user_id=str(user_doc["_id"]),
-        email=email,
+        user_id=user_doc.id,
+        email=user_doc.email,
     )
 
 
@@ -151,19 +152,13 @@ async def require_workspace_access(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access to this workspace is not authorized.",
             )
+        return workspace_id
 
-    # 3. Unowned workspace: register to current user
-    from datetime import datetime, timezone
-    now_iso = datetime.now(timezone.utc).isoformat()
-    await db.workspaces.replace_one(
-        {"_id": workspace_id},
-        {
-            "_id": workspace_id,
-            "owner_user_id": current_user.user_id,
-            "name": "Default Workspace",
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        },
-        upsert=True
+    # 3. Unregistered workspace: MUST be explicitly registered via POST /api/protected/sync/workspace/register
+    logger.warning(
+        f"[AUTH] User {current_user.user_id} attempted to access unregistered workspace {workspace_id}"
     )
-    return workspace_id
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Workspace is not registered. Please register workspace before syncing.",
+    )

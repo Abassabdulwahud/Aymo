@@ -1,12 +1,13 @@
+import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..database import get_db
-from ..models.user import User
+from ..models.mongo_models import UserDoc, utc_now_iso
+from ..mongodb import get_mongo_db
+from ..repositories.mongo_repository import UserMongoRepository
 from ..schemas.auth import (
     ForgotPasswordRequest,
     ForgotPasswordResponse,
@@ -17,9 +18,9 @@ from ..schemas.auth import (
     TokenResponse,
     UserResponse,
 )
+from ..services.translation_service import DEFAULT_LANGUAGE_CODE, normalize_language_code, translate
 from ..utils.emailing import build_password_reset_link, password_reset_email_ready, send_password_reset_email
 from ..utils.oauth import verify_apple_oauth_token, verify_google_oauth_token
-from ..services.translation_service import DEFAULT_LANGUAGE_CODE, normalize_language_code, translate
 from ..utils.security import (
     create_access_token,
     create_password_reset_token,
@@ -32,11 +33,14 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 
 
-def _language_for_email(db: Session, email: str) -> str:
-    user = db.query(User).filter(User.email == email.lower()).first()
-    if not user:
-        return DEFAULT_LANGUAGE_CODE
-    return normalize_language_code(user.preferred_language)
+async def _language_for_email_mongo(email: str) -> str:
+    db = get_mongo_db()
+    if db is not None:
+        user_repo = UserMongoRepository(db)
+        user = await user_repo.get_by_email(email.lower().strip())
+        if user and user.preferred_language:
+            return normalize_language_code(user.preferred_language)
+    return DEFAULT_LANGUAGE_CODE
 
 
 def _apple_provider_meta():
@@ -103,73 +107,102 @@ def auth_providers():
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, response: Response, db: Session = Depends(get_db)):
-    language_code = DEFAULT_LANGUAGE_CODE
-    email = payload.email.lower()
-    existing = db.query(User).filter(User.email == email).first()
+async def register(payload: RegisterRequest, response: Response):
+    db = get_mongo_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud services are temporarily unavailable.",
+        )
+    user_repo = UserMongoRepository(db)
+    email = payload.email.lower().strip()
+    existing = await user_repo.get_by_email(email)
     if existing:
-        raise HTTPException(status_code=409, detail=translate(language_code, "email_exists"))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=translate(DEFAULT_LANGUAGE_CODE, "email_exists"))
 
-    user = User(
-        full_name=payload.full_name.strip(),
+    user_doc = UserDoc(
+        id=str(uuid.uuid4()),
         email=email,
+        full_name=payload.full_name.strip(),
         password_hash=hash_password(payload.password),
         provider="email",
-        last_login_at=datetime.now(timezone.utc),
+        created_at=utc_now_iso(),
+        last_login_at=utc_now_iso(),
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    response.headers["X-AYMO-Message"] = translate(language_code, "register_success")
-    return user
+    try:
+        await user_repo.create(user_doc)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=translate(DEFAULT_LANGUAGE_CODE, "email_exists")) from exc
+
+    response.headers["X-AYMO-Message"] = translate(DEFAULT_LANGUAGE_CODE, "register_success")
+    return UserResponse(
+        id=user_doc.id,
+        email=user_doc.email,
+        full_name=user_doc.full_name,
+        preferred_ai_provider=user_doc.preferred_ai_provider,
+        preferred_theme=user_doc.preferred_theme,
+        preferred_language=user_doc.preferred_language,
+        provider=user_doc.provider,
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
-    language_code = _language_for_email(db, payload.email)
-    email = payload.email.lower()
-    user = db.query(User).filter(User.email == email).first()
-    if not user or not user.password_hash:
-        raise HTTPException(status_code=401, detail=translate(language_code, "login_failed"))
+async def login(payload: LoginRequest, response: Response):
+    db = get_mongo_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud services are temporarily unavailable.",
+        )
+    user_repo = UserMongoRepository(db)
+    email = payload.email.lower().strip()
+    language_code = await _language_for_email_mongo(email)
 
-    if not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail=translate(language_code, "login_failed"))
+    user_doc = await user_repo.get_by_email(email)
+    if not user_doc or not user_doc.password_hash:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=translate(language_code, "login_failed"))
 
-    token = create_access_token(user.email)
+    if not verify_password(payload.password, user_doc.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=translate(language_code, "login_failed"))
 
-    # Login should not fail just because the analytics timestamp could not be updated.
+    token = create_access_token(user_doc.email)
+
     try:
-        user.last_login_at = datetime.now(timezone.utc)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        await user_repo.update_last_login(user_doc.id)
     except Exception:
-        db.rollback()
+        pass
 
     response.headers["X-AYMO-Message"] = translate(language_code, "login_success")
     return TokenResponse(access_token=token)
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
-def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    language_code = _language_for_email(db, payload.email)
-    email = payload.email.lower()
-    user = db.query(User).filter(User.email == email).first()
+async def forgot_password(payload: ForgotPasswordRequest):
+    db = get_mongo_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud services are temporarily unavailable.",
+        )
+    user_repo = UserMongoRepository(db)
+    email = payload.email.lower().strip()
+    language_code = await _language_for_email_mongo(email)
+    user_doc = await user_repo.get_by_email(email)
     reset_token = None
     reset_url = None
     email_delivery_used = False
-    if user and user.password_hash:
-        reset_token = create_password_reset_token(user.email)
+    if user_doc and user_doc.password_hash:
+        reset_token = create_password_reset_token(user_doc.email)
         reset_url = build_password_reset_link(reset_token)
         if password_reset_email_ready() and reset_url:
             try:
-                send_password_reset_email(user.email, reset_url)
+                send_password_reset_email(user_doc.email, reset_url)
                 email_delivery_used = True
             except Exception as exc:
                 detail = translate(language_code, "password_reset_failed")
                 if settings.app_env == "development":
                     detail = f"{detail} {exc}"
-                raise HTTPException(status_code=500, detail=detail) from exc
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail) from exc
 
     response = ForgotPasswordResponse(
         message=translate(language_code, "password_reset_prepared"),
@@ -181,96 +214,117 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
 
 
 @router.post("/reset-password", response_model=TokenResponse)
-def reset_password(payload: ResetPasswordRequest, response: Response, db: Session = Depends(get_db)):
+async def reset_password(payload: ResetPasswordRequest, response: Response):
+    db = get_mongo_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud services are temporarily unavailable.",
+        )
+    user_repo = UserMongoRepository(db)
     try:
         token_data = decode_password_reset_token(payload.token)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
-    email = (token_data.get("sub") or "").lower()
-    language_code = _language_for_email(db, email)
-    user = db.query(User).filter(User.email == email).first()
-    if not user:
-        raise HTTPException(status_code=404, detail=translate(language_code, "user_not_found"))
+    email = (token_data.get("sub") or "").lower().strip()
+    language_code = await _language_for_email_mongo(email)
+    user_doc = await user_repo.get_by_email(email)
+    if not user_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=translate(language_code, "user_not_found"))
 
-    user.password_hash = hash_password(payload.new_password)
-    if user.provider != "email":
-        user.provider = "email"
-    token = create_access_token(user.email)
+    new_hash = hash_password(payload.new_password)
+    await user_repo.update_password_hash(user_doc.id, new_hash)
+    token = create_access_token(user_doc.email)
 
     try:
-        user.last_login_at = datetime.now(timezone.utc)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        await user_repo.update_last_login(user_doc.id)
     except Exception:
-        db.rollback()
+        pass
 
     response.headers["X-AYMO-Message"] = translate(language_code, "password_reset_success")
     return TokenResponse(access_token=token)
 
 
 @router.post("/google", response_model=TokenResponse)
-def google_sign_in(payload: OAuthRequest, response: Response, db: Session = Depends(get_db)):
+async def google_sign_in(payload: OAuthRequest, response: Response):
+    db = get_mongo_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud services are temporarily unavailable.",
+        )
+    user_repo = UserMongoRepository(db)
     try:
-        email = verify_google_oauth_token(payload.token)
+        raw_email = verify_google_oauth_token(payload.token)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail=translate(DEFAULT_LANGUAGE_CODE, "invalid_oauth")) from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=translate(DEFAULT_LANGUAGE_CODE, "invalid_oauth")) from exc
 
-    user = db.query(User).filter(User.email == email).first()
-    if not user:
+    email = raw_email.lower().strip()
+    user_doc = await user_repo.get_by_email(email)
+    if not user_doc:
         fallback_name = email.split("@")[0].replace(".", " ").replace("_", " ").strip().title()
-        user = User(
-            full_name=fallback_name or None,
+        user_doc = UserDoc(
+            id=str(uuid.uuid4()),
             email=email,
+            full_name=fallback_name or None,
             password_hash=None,
             provider="google",
-            last_login_at=datetime.now(timezone.utc),
+            created_at=utc_now_iso(),
+            last_login_at=utc_now_iso(),
         )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        try:
+            await user_repo.create(user_doc)
+        except ValueError:
+            user_doc = await user_repo.get_by_email(email)
     else:
         try:
-            user.last_login_at = datetime.now(timezone.utc)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
+            await user_repo.update_last_login(user_doc.id)
         except Exception:
-            db.rollback()
+            pass
 
-    response.headers["X-AYMO-Message"] = translate(normalize_language_code(user.preferred_language), "login_success")
-    return TokenResponse(access_token=create_access_token(user.email))
+    language_code = normalize_language_code(user_doc.preferred_language) if (user_doc and user_doc.preferred_language) else DEFAULT_LANGUAGE_CODE
+    response.headers["X-AYMO-Message"] = translate(language_code, "login_success")
+    return TokenResponse(access_token=create_access_token(email))
 
 
 @router.post("/apple", response_model=TokenResponse)
-def apple_sign_in(payload: OAuthRequest, response: Response, db: Session = Depends(get_db)):
+async def apple_sign_in(payload: OAuthRequest, response: Response):
+    db = get_mongo_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud services are temporarily unavailable.",
+        )
+    user_repo = UserMongoRepository(db)
     try:
-        email = verify_apple_oauth_token(payload.token)
+        raw_email = verify_apple_oauth_token(payload.token)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail=translate(DEFAULT_LANGUAGE_CODE, "invalid_oauth")) from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=translate(DEFAULT_LANGUAGE_CODE, "invalid_oauth")) from exc
 
-    user = db.query(User).filter(User.email == email).first()
-    if not user:
+    email = raw_email.lower().strip()
+    user_doc = await user_repo.get_by_email(email)
+    if not user_doc:
         fallback_name = email.split("@")[0].replace(".", " ").replace("_", " ").strip().title()
-        user = User(
-            full_name=fallback_name or None,
+        user_doc = UserDoc(
+            id=str(uuid.uuid4()),
             email=email,
+            full_name=fallback_name or None,
             password_hash=None,
             provider="apple",
-            last_login_at=datetime.now(timezone.utc),
+            created_at=utc_now_iso(),
+            last_login_at=utc_now_iso(),
         )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        try:
+            await user_repo.create(user_doc)
+        except ValueError:
+            user_doc = await user_repo.get_by_email(email)
     else:
         try:
-            user.last_login_at = datetime.now(timezone.utc)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
+            await user_repo.update_last_login(user_doc.id)
         except Exception:
-            db.rollback()
+            pass
 
-    response.headers["X-AYMO-Message"] = translate(normalize_language_code(user.preferred_language), "login_success")
-    return TokenResponse(access_token=create_access_token(user.email))
+    language_code = normalize_language_code(user_doc.preferred_language) if (user_doc and user_doc.preferred_language) else DEFAULT_LANGUAGE_CODE
+    response.headers["X-AYMO-Message"] = translate(language_code, "login_success")
+    return TokenResponse(access_token=create_access_token(email))

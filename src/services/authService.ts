@@ -9,7 +9,7 @@ interface TokenResponse {
 }
 
 export interface AuthUser {
-  id: number;
+  id: string | number;
   full_name: string | null;
   email: string;
   provider: string;

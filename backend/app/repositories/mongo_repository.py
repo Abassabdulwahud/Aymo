@@ -44,14 +44,24 @@ class UserMongoRepository:
         return UserDoc(**doc)
 
     async def create(self, user: UserDoc) -> UserDoc:
-        doc = user.model_dump(by_alias=True)
-        await self.col.insert_one(doc)
-        return user
+        from pymongo.errors import DuplicateKeyError
+        try:
+            doc = user.model_dump(by_alias=True)
+            await self.col.insert_one(doc)
+            return user
+        except DuplicateKeyError as exc:
+            raise ValueError("An account with this email address already exists.") from exc
 
     async def update_last_login(self, user_id: str) -> None:
         await self.col.update_one(
             {"_id": user_id},
             {"$set": {"last_login_at": utc_now_iso()}}
+        )
+
+    async def update_password_hash(self, user_id: str, new_password_hash: str) -> None:
+        await self.col.update_one(
+            {"_id": user_id},
+            {"$set": {"password_hash": new_password_hash}}
         )
 
     async def update_preferences(
@@ -123,8 +133,20 @@ class WorkspaceMongoRepository:
             created_at=now,
             updated_at=now,
         )
+        from pymongo.errors import DuplicateKeyError
         doc = ws_doc.model_dump(by_alias=True)
-        await self.col.insert_one(doc)
+        try:
+            await self.col.insert_one(doc)
+        except DuplicateKeyError as exc:
+            # Race condition: another user registered this workspace simultaneously
+            re_check = await self.col.find_one({"_id": workspace_id})
+            if re_check and re_check.get("owner_user_id") == owner_user_id:
+                return WorkspaceDoc(**re_check)
+            logger.warning(
+                f"[AUTH] Concurrent race: User {owner_user_id} attempted to claim workspace {workspace_id}"
+            )
+            raise ValueError("Workspace is owned by another user.") from exc
+
         logger.info(f"[WORKSPACE] Registered workspace {workspace_id} to user {owner_user_id}")
         return ws_doc
 
