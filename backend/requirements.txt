@@ -43,12 +43,6 @@ torchvision==0.19.1+cpu
 
 sentence-transformers==3.3.1
 
-# ── Audio transcription ───────────────────────────────────────────────────────
-# ctranslate2 3.x supports Python 3.11 with pre-built wheels (no Rust/maturin).
-ctranslate2==4.4.0
-faster-whisper==1.1.1
-imageio-ffmpeg==0.5.1
-
 # ── MongoDB Sync ──────────────────────────────────────────────────────────────
 motor==3.6.0
 

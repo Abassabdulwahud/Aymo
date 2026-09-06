@@ -2,76 +2,22 @@ import os
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
-from faster_whisper import WhisperModel
 import requests
 
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Cache loaded model at module level to avoid reloading it
-_cached_model = None
-_cached_model_size = None
-
 
 class TranscriptionProvider(ABC):
     @abstractmethod
     def transcribe(self, audio_path: str) -> Dict[str, Any]:
-        """
-        Transcribes the audio file at audio_path.
-        Returns:
-            {
-                "text": "...",
-                "segments": [
-                    {"start": 0.0, "end": 5.0, "text": "..."}
-                ],
-                "duration": ...
-            }
-        """
         pass
 
 
-class FasterWhisperProvider(TranscriptionProvider):
-    def __init__(self, model_size: str = "small", device: str = "auto", compute_type: str = "int8"):
-        self.model_size = model_size
-        self.device = device
-        self.compute_type = compute_type
-
-    def get_model(self) -> WhisperModel:
-        global _cached_model, _cached_model_size
-        if _cached_model is None or _cached_model_size != self.model_size:
-            logger.info("Loading Faster-Whisper model size '%s' on device '%s' with compute_type '%s'",
-                        self.model_size, self.device, self.compute_type)
-            _cached_model = WhisperModel(
-                self.model_size,
-                device=self.device,
-                compute_type=self.compute_type
-            )
-            _cached_model_size = self.model_size
-        return _cached_model
-
+class DisabledTranscriptionProvider(TranscriptionProvider):
     def transcribe(self, audio_path: str) -> Dict[str, Any]:
-        model = self.get_model()
-        logger.info("Starting local Faster-Whisper transcription for %s", audio_path)
-        segments_generator, info = model.transcribe(audio_path, beam_size=5)
-        
-        segments = []
-        text_pieces = []
-        for segment in segments_generator:
-            segments.append({
-                "start": segment.start,
-                "end": segment.end,
-                "text": segment.text.strip()
-            })
-            text_pieces.append(segment.text)
-            
-        full_text = "".join(text_pieces).strip()
-        logger.info("Completed local transcription. Segments: %d, Duration: %.2fs", len(segments), info.duration)
-        return {
-            "text": full_text,
-            "segments": segments,
-            "duration": info.duration
-        }
+        raise NotImplementedError("Local audio and video transcription are temporarily disabled in production.")
 
 
 class OpenAIWhisperProvider(TranscriptionProvider):
@@ -185,12 +131,9 @@ def get_transcription_provider() -> TranscriptionProvider:
     settings = get_settings()
     provider_name = settings.transcription_provider.lower().strip()
     
-    if provider_name == "openai":
+    if provider_name == "openai" and settings.openai_api_key:
         return OpenAIWhisperProvider(api_key=settings.openai_api_key)
-    elif provider_name == "deepgram":
-        deepgram_key = os.getenv("DEEPGRAM_API_KEY")
-        return DeepgramProvider(api_key=deepgram_key)
+    elif provider_name == "deepgram" and os.getenv("DEEPGRAM_API_KEY"):
+        return DeepgramProvider(api_key=os.getenv("DEEPGRAM_API_KEY"))
     else:
-        # Default is Faster-Whisper
-        model_size = settings.transcription_model.lower().strip()
-        return FasterWhisperProvider(model_size=model_size, device="auto", compute_type="int8")
+        return DisabledTranscriptionProvider()

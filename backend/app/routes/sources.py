@@ -74,31 +74,9 @@ def _delete_source_asset(source: Source) -> None:
 
 
 def _extract_media_duration(file_path: Path) -> Optional[int]:
-    import subprocess
-    import re
-    try:
-        import imageio_ffmpeg
-    except ModuleNotFoundError:
-        logger.warning(
-            "imageio-ffmpeg is not installed; skipping duration extraction for %s",
-            file_path,
-        )
-        return None
-    try:
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        result = subprocess.run(
-            [ffmpeg_exe, "-i", str(file_path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=10
-        )
-        match = re.search(r"Duration:\s*(\d{2}):(\d{2}):(\d{2})", result.stderr)
-        if match:
-            hours, minutes, seconds = map(int, match.groups())
-            return hours * 3600 + minutes * 60 + seconds
-    except Exception as exc:
-        logger.warning("Failed to extract media duration for %s: %s", file_path, exc)
+    # FFmpeg (imageio-ffmpeg) has been removed to reduce Render memory usage.
+    # Audio/video duration is not extractable without FFmpeg; return None so the
+    # upload still succeeds with duration_seconds=null.
     return None
 
 
