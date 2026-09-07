@@ -57,7 +57,7 @@ async def chat_with_ai(
     db = get_mongo_db()
     if db is None:
         raise HTTPException(
-            status_code=53,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Cloud services are temporarily unavailable.",
         )
 

@@ -1772,12 +1772,15 @@ export default function App() {
           ),
         }));
       } catch (httpError) {
-        const detail =
+        let detail =
           httpError instanceof Error
             ? httpError.message
             : streamError instanceof Error
               ? streamError.message
               : "The AI assistant is unavailable right now.";
+        if (detail === "Failed to fetch") {
+          detail = "Unable to reach the server. Please check your network connection or try again.";
+        }
         setChatMessagesByNote((prev) => ({
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>

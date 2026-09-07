@@ -55,5 +55,24 @@ class TestMongoAIAuthorization(unittest.TestCase):
         self.assertIn("user-123", repr(user))
 
 
+class TestAIProviderRouter(unittest.TestCase):
+    def test_router_handles_string_and_enum_provider(self):
+        from app.models.enums import AIProvider
+        from app.services.ai.router import get_provider_clients, get_provider_client
+        clients_enum = get_provider_clients(AIProvider.GEMINI)
+        clients_str = get_provider_clients("gemini")
+        self.assertEqual(len(clients_enum), len(clients_str))
+        if clients_enum:
+            self.assertEqual(clients_enum[0][0], "gemini")
+            self.assertEqual(clients_str[0][0], "gemini")
+
+    def test_get_provider_client_handles_string_and_enum(self):
+        from app.models.enums import AIProvider
+        from app.services.ai.router import get_provider_client
+        client_enum = get_provider_client(AIProvider.GEMINI)
+        client_str = get_provider_client("gemini")
+        self.assertEqual(type(client_enum), type(client_str))
+
+
 if __name__ == "__main__":
     unittest.main()

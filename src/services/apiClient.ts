@@ -69,13 +69,17 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     });
   } catch (networkError) {
     // The request never reached the server (connection refused, DNS failure,
-    // timeout, CORS preflight blocked, etc.).
-    const message = networkError instanceof Error ? networkError.message : "Network error.";
-    throw new ApiError(message, null);
+    // timeout, CORS preflight blocked, server spinning down/cold start, etc.).
+    const rawMessage = networkError instanceof Error ? networkError.message : "Network error.";
+    const userFriendlyMessage =
+      rawMessage === "Failed to fetch"
+        ? "Unable to reach the server. Please check your network connection or try again."
+        : rawMessage;
+    throw new ApiError(userFriendlyMessage, null);
   }
 
   if (!response.ok) {
-    let detail = "Request failed.";
+    let detail = "";
     try {
       const payload = (await response.json()) as { detail?: unknown };
       if (payload.detail != null) {
@@ -85,8 +89,25 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
             : JSON.stringify(payload.detail);
       }
     } catch {
-      // Ignore JSON parsing errors for empty responses.
+      // Ignore JSON parsing errors for empty/HTML error responses.
     }
+
+    if (!detail) {
+      if (response.status === 503) {
+        detail = "Cloud services are temporarily unavailable. Please try again in a moment.";
+      } else if (response.status === 502) {
+        detail = "The AI provider service is currently unavailable.";
+      } else if (response.status === 504) {
+        detail = "The server request timed out. Please try again.";
+      } else if (response.status === 401) {
+        detail = "Authentication required. Please log in again.";
+      } else if (response.status === 403) {
+        detail = "Access to this resource is denied.";
+      } else {
+        detail = `Request failed with status ${response.status}.`;
+      }
+    }
+
     throw new ApiError(detail, response.status);
   }
 

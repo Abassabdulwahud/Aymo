@@ -98,7 +98,7 @@ def run_migrations():
 
 
 @app.on_event("startup")
-async def warm_embedding_model():
+async def startup_event():
     from .mongodb import init_mongodb
     await init_mongodb()
     
@@ -108,10 +108,6 @@ async def warm_embedding_model():
 
     run_migrations()
     initialize_translations()
-    
-    # Run embedding model initialization in a background thread so it doesn't block startup port binding
-    import asyncio
-    asyncio.create_task(asyncio.to_thread(initialize_embedding_model))
     
     app.state.embedding_model_name = EMBEDDING_MODEL_NAME
     app.state.embedding_dimension = EMBEDDING_DIMENSION
