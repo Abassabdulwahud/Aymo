@@ -12,6 +12,7 @@ __pycache__/
 # ── Secrets / local config ───────────────────────────
 backend/.env
 backend/.dev_jwt_secret
+.dev_jwt_secret
 .env
 .env.local
 

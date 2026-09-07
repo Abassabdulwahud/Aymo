@@ -1,206 +1,289 @@
 import hashlib
+import logging
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, WebSocketDisconnect
-from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..database import SessionLocal, get_db
-from ..dependencies.auth import get_current_user
-from ..models.note import Note
-from ..models.user import User
-from ..repositories.scoped_queries import note_for_user
+from ..dependencies.mongo_auth import AuthenticatedUser, get_current_mongo_user
+from ..mongodb import get_mongo_db
+from ..repositories.mongo_repository import (
+    AiCacheMongoRepository,
+    FileMongoRepository,
+    NoteMongoRepository,
+    UserMongoRepository,
+)
 from ..schemas.ai import AIChatRequest, AIChatResponse, AIResponseItem, AIResponseList
 from ..services.ai import AIProviderError
-from ..services.ai.context import build_conversation_context, build_note_context
-from ..services.ai.orchestrator import (
-    get_cached_ai_responses,
-    get_or_create_ai_response,
-    store_ai_response,
-    stream_ai_response,
-)
-from ..services.embeddings import search_note_embeddings
+from ..services.ai.context import build_conversation_context_mongo, build_system_prompt
+from ..services.ai.orchestrator import stream_ai_response
+from ..services.ai.router import get_provider_clients
 from ..utils.security import decode_token
+
+logger = logging.getLogger("aymo.ai_route")
 
 router = APIRouter(prefix="/api/protected", tags=["ai"])
 ws_router = APIRouter(tags=["ai"])
 
 
-def _get_note_or_404(db: Session, user_id: int, note_id: int) -> Note:
-    note = note_for_user(db, user_id, note_id).first()
-    if note is None:
-        raise HTTPException(status_code=404, detail="Note not found.")
-    return note
+async def _get_mongo_note_or_authorize(db, note_id: str, user_id: str):
+    """
+    Retrieves note for authorized user.
+    Raises:
+      HTTP 403 Forbidden if note exists under another user_id.
+      HTTP 404 Not Found if note does not exist in MongoDB.
+    """
+    note_repo = NoteMongoRepository(db)
+    note = await note_repo.get_by_id(str(note_id), user_id)
+    if note is not None:
+        return note
+
+    # Check if note exists under any user
+    any_note = await db.notes.find_one({"_id": str(note_id)})
+    if any_note and any_note.get("user_id") != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Access to this note is not authorized.",
+        )
+    raise HTTPException(status_code=404, detail="Note not found.")
 
 
 @router.post("/ai/chat", response_model=AIChatResponse)
-def chat_with_ai(
+async def chat_with_ai(
     payload: AIChatRequest,
     response: Response,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_mongo_user),
 ):
-    note = _get_note_or_404(db, current_user.id, payload.note_id)
-    ranked_chunks, embedding_warning = search_note_embeddings(db, note.id, payload.message, limit=20)
-    
-    settings = get_settings()
-    context_text = build_conversation_context(
-        db=db,
-        note=note,
-        user=current_user,
-        current_message=payload.message,
-        ranked_chunks=ranked_chunks,
-        memory_window_size=settings.ai_memory_window_size,
-        max_total_tokens=settings.ai_max_context_tokens,
-    )
-    context_hash = hashlib.sha256(context_text.encode("utf-8")).hexdigest()
+    db = get_mongo_db()
+    if db is None:
+        raise HTTPException(
+            status_code=53,
+            detail="Cloud services are temporarily unavailable.",
+        )
+
+    note_id_str = str(payload.note_id)
+    note = await _get_mongo_note_or_authorize(db, note_id_str, current_user.user_id)
+
+    user_repo = UserMongoRepository(db)
+    user_doc = await user_repo.get_by_id(current_user.user_id)
+    user_language = (user_doc.preferred_language if user_doc else "en") or "en"
+    preferred_ai_provider = (user_doc.preferred_ai_provider if user_doc else "gemini") or "gemini"
 
     requested_provider = payload.ai_provider.value if payload.ai_provider is not None else None
-    provider_name = requested_provider or current_user.preferred_ai_provider.value
-    cached, _, _ = get_or_create_ai_response(
-        db,
-        note,
-        current_user,
-        payload.message,
-        context_text,
-        provider_name,
+    provider_name = requested_provider or preferred_ai_provider
+
+    ai_cache_repo = AiCacheMongoRepository(db)
+    cached = await ai_cache_repo.get_or_create(
+        note_id=note_id_str,
+        user_id=current_user.user_id,
+        question=payload.message,
+        provider=provider_name,
     )
     if cached is not None:
-        if embedding_warning:
-            response.headers["X-AYMO-Warning"] = embedding_warning
         return AIChatResponse(
-            note_id=note.id,
+            note_id=payload.note_id,
             provider=cached["provider"],
             response=cached["response"],
             cached=True,
         )
 
-    try:
-        chunks, provider = stream_ai_response(
-            db,
-            note,
-            current_user,
-            payload.message,
-            context_text,
-            requested_provider,
+    # Fetch recent responses for conversation memory
+    recent_responses = await ai_cache_repo.get_cached_responses(note_id_str, current_user.user_id)
+
+    # Fetch attached file docs
+    file_repo = FileMongoRepository(db)
+    file_docs = await file_repo.list_for_note(note_id_str, current_user.user_id)
+    file_summaries = [f"{f.file_name} ({f.file_type}) - status: {f.extraction_status}" for f in file_docs]
+    extracted_items = [{"source": f.file_name, "extracted_text": f.extracted_text} for f in file_docs if f.extracted_text]
+
+    settings = get_settings()
+    context_text = build_conversation_context_mongo(
+        note_title=note.title,
+        note_body=note.body,
+        current_message=payload.message,
+        user_language=user_language,
+        recent_responses=recent_responses,
+        file_summaries=file_summaries,
+        extracted_items=extracted_items,
+        memory_window_size=settings.ai_memory_window_size,
+        max_total_tokens=settings.ai_max_context_tokens,
+    )
+
+    system_prompt = build_system_prompt(user_language)
+    clients = get_provider_clients(provider_name)
+    if not clients:
+        raise HTTPException(
+            status_code=503,
+            detail="No configured AI providers are available.",
         )
-        response_text = "".join(chunks).strip()
-    except AIProviderError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    response_text = ""
+    used_provider = provider_name
+    for p_name, client in clients:
+        try:
+            chunks = client.stream(system_prompt, context_text)
+            response_text = "".join(chunks).strip()
+            if response_text:
+                used_provider = p_name
+                break
+        except Exception as exc:
+            logger.warning(f"AI provider {p_name} failed: {exc}")
+            continue
 
     if not response_text:
         raise HTTPException(status_code=502, detail="The AI provider returned an empty response.")
 
-    stored = store_ai_response(db, note, current_user, payload.message, response_text, context_hash, provider)
-    if embedding_warning:
-        response.headers["X-AYMO-Warning"] = embedding_warning
+    stored = await ai_cache_repo.store(
+        note_id=note_id_str,
+        user_id=current_user.user_id,
+        question=payload.message,
+        response=response_text,
+        provider=used_provider,
+    )
+
     return AIChatResponse(
-        note_id=note.id,
-        provider=provider,
+        note_id=payload.note_id,
+        provider=used_provider,
         response=stored["response"],
-        cached=stored["cached"],
+        cached=False,
     )
 
 
 @router.get("/ai/response/{note_id}", response_model=AIResponseList)
-def list_cached_responses(
-    note_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+async def list_cached_responses(
+    note_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_mongo_user),
 ):
-    _get_note_or_404(db, current_user.id, note_id)
-    items = [AIResponseItem(**item) for item in get_cached_ai_responses(db, note_id, current_user.id)]
+    db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Cloud services temporarily unavailable.")
+
+    await _get_mongo_note_or_authorize(db, str(note_id), current_user.user_id)
+    ai_cache_repo = AiCacheMongoRepository(db)
+    items_raw = await ai_cache_repo.get_cached_responses(str(note_id), current_user.user_id)
+    items = [AIResponseItem(**item) for item in items_raw]
     return AIResponseList(items=items, total=len(items))
 
 
-def _resolve_websocket_user(db: Session, token: str) -> User:
+@ws_router.websocket("/ws/ai/chat/{note_id}")
+async def websocket_chat(websocket: WebSocket, note_id: str):
+    db = get_mongo_db()
+    if db is None:
+        await websocket.close(code=4503)
+        return
+
+    token = (websocket.query_params.get("token") or "").strip()
+    if not token:
+        await websocket.close(code=4401)
+        return
+
     try:
         payload = decode_token(token)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        email = (payload.get("sub") or "").lower().strip()
+    except ValueError:
+        await websocket.close(code=4401)
+        return
 
-    email = (payload.get("sub") or "").lower()
-    user = db.query(User).filter(User.email == email).first()
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found.")
-    return user
+    user_repo = UserMongoRepository(db)
+    user_doc = await user_repo.get_by_email(email)
+    if not user_doc:
+        await websocket.close(code=4401)
+        return
 
-
-@ws_router.websocket("/ws/ai/chat/{note_id}")
-async def websocket_chat(websocket: WebSocket, note_id: int):
-    db = SessionLocal()
     try:
-        token = (websocket.query_params.get("token") or "").strip()
-        if not token:
-            raise HTTPException(status_code=401, detail="Missing WebSocket token.")
-        current_user = _resolve_websocket_user(db, token)
-        note = _get_note_or_404(db, current_user.id, note_id)
-        await websocket.accept()
+        note = await _get_mongo_note_or_authorize(db, str(note_id), user_doc.id)
+    except HTTPException as exc:
+        await websocket.close(code=4403 if exc.status_code == 403 else 4404)
+        return
 
-        settings = get_settings()
+    await websocket.accept()
+    ai_cache_repo = AiCacheMongoRepository(db)
+    file_repo = FileMongoRepository(db)
+    settings = get_settings()
+
+    user_language = user_doc.preferred_language or "en"
+    preferred_ai_provider = user_doc.preferred_ai_provider or "gemini"
+
+    try:
         while True:
-            payload = await websocket.receive_json()
-            message = (payload.get("message") or "").strip()
-            requested_provider = (payload.get("ai_provider") or "").strip() or None
+            data = await websocket.receive_json()
+            message = (data.get("message") or "").strip()
+            requested_provider = (data.get("ai_provider") or "").strip() or None
+            provider_name = requested_provider or preferred_ai_provider
+
             if not message:
                 await websocket.send_json({"type": "error", "detail": "Message cannot be empty."})
                 continue
 
-            ranked_chunks, _ = search_note_embeddings(db, note.id, message, limit=20)
-            context_text = build_conversation_context(
-                db=db,
-                note=note,
-                user=current_user,
+            cached = await ai_cache_repo.get_or_create(
+                note_id=str(note_id),
+                user_id=user_doc.id,
+                question=message,
+                provider=provider_name,
+            )
+            if cached is not None:
+                await websocket.send_json({
+                    "type": "complete",
+                    "provider": cached["provider"],
+                    "content": cached["response"],
+                    "cached": True,
+                })
+                continue
+
+            recent_responses = await ai_cache_repo.get_cached_responses(str(note_id), user_doc.id)
+            file_docs = await file_repo.list_for_note(str(note_id), user_doc.id)
+            file_summaries = [f"{f.file_name} ({f.file_type}) - status: {f.extraction_status}" for f in file_docs]
+            extracted_items = [{"source": f.file_name, "extracted_text": f.extracted_text} for f in file_docs if f.extracted_text]
+
+            context_text = build_conversation_context_mongo(
+                note_title=note.title,
+                note_body=note.body,
                 current_message=message,
-                ranked_chunks=ranked_chunks,
+                user_language=user_language,
+                recent_responses=recent_responses,
+                file_summaries=file_summaries,
+                extracted_items=extracted_items,
                 memory_window_size=settings.ai_memory_window_size,
                 max_total_tokens=settings.ai_max_context_tokens,
             )
-            context_hash = hashlib.sha256(context_text.encode("utf-8")).hexdigest()
 
-            provider_name = requested_provider or current_user.preferred_ai_provider.value
-            cached, _, _ = get_or_create_ai_response(
-                db,
-                note,
-                current_user,
-                message,
-                context_text,
-                provider_name,
-            )
-            if cached is not None:
-                await websocket.send_json(
-                    {
-                        "type": "complete",
-                        "provider": cached["provider"],
-                        "content": cached["response"],
-                        "cached": True,
-                    }
-                )
+            system_prompt = build_system_prompt(user_language)
+            clients = get_provider_clients(provider_name)
+            if not clients:
+                await websocket.send_json({"type": "error", "detail": "No AI providers available."})
                 continue
 
-            try:
-                chunks, provider = stream_ai_response(db, note, current_user, message, context_text, requested_provider)
-                parts = []
-                for chunk in chunks:
-                    if not chunk:
-                        continue
-                    parts.append(chunk)
-                    await websocket.send_json({"type": "delta", "provider": provider, "content": chunk})
-                response_text = "".join(parts).strip()
-                if not response_text:
-                    raise AIProviderError("The AI provider returned an empty response.")
-                stored = store_ai_response(db, note, current_user, message, response_text, context_hash, provider)
-                await websocket.send_json(
-                    {
-                        "type": "complete",
-                        "provider": provider,
-                        "content": stored["response"],
-                        "cached": False,
-                    }
+            response_parts = []
+            used_provider = provider_name
+            for p_name, client in clients:
+                try:
+                    for chunk in client.stream(system_prompt, context_text):
+                        if chunk:
+                            response_parts.append(chunk)
+                            await websocket.send_json({"type": "delta", "provider": p_name, "content": chunk})
+                    if response_parts:
+                        used_provider = p_name
+                        break
+                except Exception as exc:
+                    logger.warning(f"WebSocket AI provider {p_name} stream error: {exc}")
+                    continue
+
+            full_response = "".join(response_parts).strip()
+            if full_response:
+                stored = await ai_cache_repo.store(
+                    note_id=str(note_id),
+                    user_id=user_doc.id,
+                    question=message,
+                    response=full_response,
+                    provider=used_provider,
                 )
-            except AIProviderError as exc:
-                await websocket.send_json({"type": "error", "detail": str(exc)})
-    except HTTPException as exc:
-        await websocket.close(code=4401 if exc.status_code == 401 else 4404)
+                await websocket.send_json({
+                    "type": "complete",
+                    "provider": used_provider,
+                    "content": stored["response"],
+                    "cached": False,
+                })
+            else:
+                await websocket.send_json({"type": "error", "detail": "The AI provider returned an empty response."})
     except WebSocketDisconnect:
         pass
-    finally:
-        db.close()

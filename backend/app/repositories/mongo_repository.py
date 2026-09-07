@@ -447,3 +447,76 @@ class SyncMongoRepository:
         async for doc in cursor:
             tombstones.append(TombstoneDoc(**doc))
         return tombstones
+
+
+# ─── AI Cache Repository ───────────────────────────────────────────────────────
+
+class AiCacheMongoRepository:
+    def __init__(self, db: AsyncIOMotorDatabase):
+        self.col = db.ai_cache
+
+    async def get_cached_responses(self, note_id: str, user_id: str) -> List[Dict[str, Any]]:
+        cursor = self.col.find({"note_id": str(note_id), "user_id": user_id}).sort("created_at", -1)
+        items = []
+        async for doc in cursor:
+            items.append({
+                "id": str(doc.get("_id") or doc.get("id")),
+                "provider": doc.get("provider", "assistant"),
+                "question": doc.get("question", ""),
+                "response": doc.get("response", ""),
+                "created_at": doc.get("created_at", utc_now_iso()),
+            })
+        return items
+
+    async def get_or_create(
+        self,
+        note_id: str,
+        user_id: str,
+        question: str,
+        provider: str,
+    ) -> Optional[Dict[str, Any]]:
+        doc = await self.col.find_one({
+            "note_id": str(note_id),
+            "user_id": user_id,
+            "provider": provider,
+            "question": question.strip(),
+        })
+        if not doc:
+            return None
+        return {
+            "id": str(doc.get("_id") or doc.get("id")),
+            "provider": doc.get("provider", provider),
+            "question": doc.get("question", question),
+            "response": doc.get("response", ""),
+            "created_at": doc.get("created_at", utc_now_iso()),
+            "cached": True,
+        }
+
+    async def store(
+        self,
+        note_id: str,
+        user_id: str,
+        question: str,
+        response: str,
+        provider: str,
+    ) -> Dict[str, Any]:
+        doc_id = str(uuid.uuid4())
+        now = utc_now_iso()
+        doc = {
+            "_id": doc_id,
+            "user_id": user_id,
+            "note_id": str(note_id),
+            "provider": provider,
+            "question": question.strip(),
+            "response": response.strip(),
+            "created_at": now,
+        }
+        await self.col.insert_one(doc)
+        return {
+            "id": doc_id,
+            "provider": provider,
+            "question": question,
+            "response": response,
+            "created_at": now,
+            "cached": False,
+        }

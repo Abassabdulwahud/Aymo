@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -7,13 +7,13 @@ from ..models.enums import AIProvider
 
 
 class AIChatRequest(BaseModel):
-    note_id: int
+    note_id: Union[str, int]
     message: str = Field(min_length=1, max_length=5000)
     ai_provider: Optional[AIProvider] = None
 
 
 class AIChatResponse(BaseModel):
-    note_id: int
+    note_id: Union[str, int]
     provider: str
     response: str
     cached: bool

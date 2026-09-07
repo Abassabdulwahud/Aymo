@@ -100,6 +100,105 @@ def estimate_tokens(text: str) -> int:
     return len(text) // 4
 
 
+def build_conversation_context_mongo(
+    note_title: str,
+    note_body: str,
+    current_message: str,
+    user_language: str = "en",
+    recent_responses: Optional[List[dict]] = None,
+    file_summaries: Optional[List[str]] = None,
+    extracted_items: Optional[List[dict]] = None,
+    memory_window_size: int = 10,
+    max_total_tokens: int = 12000,
+) -> str:
+    system_prompt = build_system_prompt(user_language)
+    user_prompt_section = f"CURRENT USER PROMPT:\n{current_message}"
+
+    T_mandatory = estimate_tokens(system_prompt) + estimate_tokens(user_prompt_section)
+    remaining_tokens = max(0, max_total_tokens - T_mandatory)
+
+    # Chat history
+    chat_pairs = []
+    if recent_responses:
+        for resp in recent_responses[-memory_window_size:]:
+            q = resp.get("question", "")
+            r = resp.get("response", "")
+            if q and r:
+                chat_pairs.append((q, r))
+
+    def format_chat_history(pairs) -> str:
+        if not pairs:
+            return ""
+        lines = [f"User: {q}\nAssistant: {r}" for q, r in pairs]
+        return "RECENT CHAT HISTORY:\n" + "\n\n".join(lines)
+
+    include_chat = ""
+    if chat_pairs:
+        formatted_chat = format_chat_history(chat_pairs)
+        T_chat = estimate_tokens(formatted_chat)
+        if T_chat <= remaining_tokens:
+            include_chat = formatted_chat
+            remaining_tokens -= T_chat
+        else:
+            while chat_pairs and estimate_tokens(format_chat_history(chat_pairs)) > remaining_tokens:
+                chat_pairs.pop(0)
+            if chat_pairs:
+                include_chat = format_chat_history(chat_pairs)
+            remaining_tokens = max(0, remaining_tokens - estimate_tokens(include_chat))
+    # Note Content
+    title_str = note_title or "(untitled)"
+    body_str = note_body or "(empty)"
+
+    def format_note_content(body: str) -> str:
+        return f"NOTE CONTENT:\nTitle: {title_str}\nBody: {body}"
+
+    note_text = format_note_content(body_str)
+    T_note = estimate_tokens(note_text)
+    include_note = ""
+    if T_note <= remaining_tokens:
+        include_note = note_text
+        remaining_tokens -= T_note
+    else:
+        chars_to_keep = max(0, remaining_tokens * 4 - len(f"NOTE CONTENT:\nTitle: {title_str}\nBody: "))
+        include_note = format_note_content(body_str[:chars_to_keep])
+        remaining_tokens = 0
+
+    # Attached Files / Extracted Items
+    include_files = ""
+    if file_summaries and remaining_tokens > 0:
+        files_text = "ATTACHED FILES:\n" + "\n".join(file_summaries)
+        if estimate_tokens(files_text) <= remaining_tokens:
+            include_files = files_text
+            remaining_tokens -= estimate_tokens(files_text)
+
+    include_extracted = ""
+    if extracted_items and remaining_tokens > 0:
+        sections = []
+        for item in extracted_items:
+            label = item.get("source") or item.get("file_name") or "File"
+            content = item.get("content") or item.get("extracted_text") or ""
+            if content:
+                sections.append(f"SOURCE: {label}\nCONTENT:\n{content}")
+        if sections:
+            ext_text = "RELEVANT EXTRACTED CONTENT:\n" + "\n\n---\n\n".join(sections)
+            if estimate_tokens(ext_text) <= remaining_tokens:
+                include_extracted = ext_text
+                remaining_tokens -= estimate_tokens(ext_text)
+
+    final_sections = []
+    if include_chat:
+        final_sections.append(include_chat)
+    if include_note:
+        final_sections.append(include_note)
+    if include_files:
+        final_sections.append(include_files)
+    if include_extracted:
+        final_sections.append(include_extracted)
+    final_sections.append(user_prompt_section)
+
+    return "\n\n---\n\n".join(final_sections)
+
+
 def build_conversation_context(
     db: Session,
     note: Note,
