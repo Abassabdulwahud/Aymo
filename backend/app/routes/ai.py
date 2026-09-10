@@ -29,6 +29,11 @@ ws_router = APIRouter(tags=["ai"])
 async def _get_mongo_note_or_authorize(db, note_id: str, user_id: str):
     """
     Retrieves note for authorized user.
+
+    Resolution order:
+      1. Direct lookup by note_id in notes collection (fast path).
+      2. Remote-mapping lookup: note_id may be a UUID remoteId assigned by
+         sync/push; resolve it to the actual local_id stored as notes._id.
     Raises:
       HTTP 403 Forbidden if note exists under another user_id.
       HTTP 404 Not Found if note does not exist in MongoDB.
@@ -38,13 +43,25 @@ async def _get_mongo_note_or_authorize(db, note_id: str, user_id: str):
     if note is not None:
         return note
 
-    # Check if note exists under any user
+    # Check if note exists under any user (ownership guard)
     any_note = await db.notes.find_one({"_id": str(note_id)})
     if any_note and any_note.get("user_id") != user_id:
         raise HTTPException(
             status_code=403,
             detail="Access to this note is not authorized.",
         )
+
+    # Fall back: note_id might be a remoteId from remote_mappings.
+    # The sync layer stores notes with _id=local_id but returns a UUID remoteId.
+    mapping = await db.remote_mappings.find_one(
+        {"remote_id": str(note_id), "entity_type": "note", "user_id": user_id}
+    )
+    if mapping:
+        local_id = mapping["local_id"]
+        note = await note_repo.get_by_id(local_id, user_id)
+        if note is not None:
+            return note
+
     raise HTTPException(status_code=404, detail="Note not found.")
 
 
