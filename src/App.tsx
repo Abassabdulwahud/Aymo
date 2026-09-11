@@ -833,7 +833,7 @@ export default function App() {
       }
 
       try {
-        const items = await listAIResponses(authToken, selectedNote.id as any);
+        const items = await listAIResponses(authToken, selectedNote.id);
         if (cancelled) return;
         setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => {
           if (prev[selectedNote.id]) {
@@ -1740,7 +1740,7 @@ export default function App() {
     );
 
     try {
-      const streamed = await streamAIChat(authToken, selectedNote.id as any, prompt, aiProvider, {
+      const streamed = await streamAIChat(authToken, selectedNote.id, prompt, aiProvider, {
         onDelta: (chunk) => {
           streamer.enqueue(chunk);
         },
@@ -1762,7 +1762,7 @@ export default function App() {
     } catch (streamError) {
       streamer.destroy();
       try {
-        const fallback = await chatWithAIHttp(authToken, selectedNote.id as any, prompt, aiProvider);
+        const fallback = await chatWithAIHttp(authToken, selectedNote.id, prompt, aiProvider);
         setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>

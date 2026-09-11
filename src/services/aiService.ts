@@ -15,7 +15,7 @@ interface CachedAIResponseList {
 }
 
 interface ChatResponse {
-  note_id: number;
+  note_id: string | number;
   provider: string;
   response: string;
   cached: boolean;
@@ -25,7 +25,7 @@ interface StreamCallbacks {
   onDelta?: (chunk: string) => void;
 }
 
-export async function listAIResponses(token: string, noteId: number): Promise<CachedAIResponse[]> {
+export async function listAIResponses(token: string, noteId: string | number): Promise<CachedAIResponse[]> {
   const response = await apiRequest<CachedAIResponseList>(`/api/protected/ai/response/${noteId}`, {
     method: "GET",
     token,
@@ -35,7 +35,7 @@ export async function listAIResponses(token: string, noteId: number): Promise<Ca
 
 export async function chatWithAIHttp(
   token: string,
-  noteId: number,
+  noteId: string | number,
   message: string,
   aiProvider: AIProvider,
 ): Promise<ChatResponse> {
@@ -55,7 +55,7 @@ function resolveWebSocketBase(): string {
 
 export async function streamAIChat(
   token: string,
-  noteId: number,
+  noteId: string | number,
   message: string,
   aiProvider: AIProvider,
   callbacks: StreamCallbacks = {},
@@ -67,9 +67,10 @@ export async function streamAIChat(
     let finalContent = "";
     let provider = "assistant";
     let settled = false;
+
     const timeoutId = window.setTimeout(() => {
       fail(new Error("The AI assistant connection timed out."));
-    }, 8000);
+    }, 15000);
 
     const fail = (error: Error) => {
       if (settled) return;
@@ -140,3 +141,4 @@ export async function streamAIChat(
     });
   });
 }
+
