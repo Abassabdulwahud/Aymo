@@ -68,14 +68,30 @@ export async function streamAIChat(
     let provider = "assistant";
     let settled = false;
 
-    const timeoutId = window.setTimeout(() => {
+    let timerId: number | null = window.setTimeout(() => {
       fail(new Error("The AI assistant connection timed out."));
     }, 15000);
+
+    const resetTimer = () => {
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+      }
+      timerId = window.setTimeout(() => {
+        fail(new Error("The AI assistant connection timed out."));
+      }, 15000);
+    };
+
+    const clearTimer = () => {
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+        timerId = null;
+      }
+    };
 
     const fail = (error: Error) => {
       if (settled) return;
       settled = true;
-      window.clearTimeout(timeoutId);
+      clearTimer();
       try {
         socket.close();
       } catch {
@@ -85,6 +101,7 @@ export async function streamAIChat(
     };
 
     socket.addEventListener("open", () => {
+      resetTimer();
       socket.send(JSON.stringify({ message, ai_provider: aiProvider }));
     });
 
@@ -108,6 +125,7 @@ export async function streamAIChat(
         }
 
         if (payload.type === "delta") {
+          resetTimer();
           const chunk = payload.content ?? "";
           finalContent += chunk;
           callbacks.onDelta?.(chunk);
@@ -116,7 +134,7 @@ export async function streamAIChat(
 
         if (!settled) {
           settled = true;
-          window.clearTimeout(timeoutId);
+          clearTimer();
           const completedContent = payload.cached ? payload.content ?? finalContent : finalContent || payload.content || "";
           socket.close();
           resolve({
