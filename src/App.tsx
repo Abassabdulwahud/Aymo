@@ -1740,6 +1740,36 @@ export default function App() {
     );
 
     try {
+      // ── Pre-AI sync gate ──────────────────────────────────────────────────
+      // If this note has never been synced to MongoDB (e.g. created offline),
+      // the backend will return 404. Force-push the note now so the AI call
+      // always finds the note in the cloud.
+      if (authToken !== "local-offline-session-token") {
+        try {
+          await syncService.pushNoteImmediate(String(selectedNote.id));
+        } catch (syncErr) {
+          const syncErrMsg =
+            syncErr instanceof Error
+              ? syncErr.message
+              : "Note could not be synced to the cloud.";
+          setChatMessagesByNote((prev) => ({
+            ...prev,
+            [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    content: `This note needs to sync before AI can read it. ${syncErrMsg}`,
+                    status: "error" as const,
+                  }
+                : message,
+            ),
+          }));
+          streamer.destroy();
+          return;
+        }
+      }
+      // ── End pre-AI sync gate ──────────────────────────────────────────────
+
       const streamed = await streamAIChat(authToken, selectedNote.id, prompt, aiProvider, {
         onDelta: (chunk) => {
           streamer.enqueue(chunk);

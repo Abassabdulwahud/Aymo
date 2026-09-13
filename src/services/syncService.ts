@@ -237,6 +237,67 @@ export class SyncService {
     return () => this._stateListeners.delete(handler);
   }
 
+  // ── Immediate Note Push ────────────────────────────────────────────────────
+
+  /**
+   * Forces all pending/failed sync operations for a specific note to be
+   * pushed to the cloud immediately, bypassing the normal queue scheduling.
+   *
+   * Use this before AI calls to ensure the note exists in MongoDB before
+   * the backend tries to resolve it.
+   *
+   * @param localId - The local UUID of the note to sync.
+   * @returns The remoteId (= localId for the MongoDB adapter) on success.
+   * @throws If the adapter is missing, the device is offline, or the push fails.
+   */
+  async pushNoteImmediate(localId: string): Promise<string> {
+    if (!this.adapter) {
+      throw new Error("Cloud sync is not configured.");
+    }
+    if (!isOnline()) {
+      throw new Error("No internet connection. Please connect and try again.");
+    }
+    if (!this.workspaceId) {
+      throw new Error("Workspace is not initialized.");
+    }
+
+    // Find all pending/failed queue records for this localId.
+    const all = await getPendingOperations(this.workspaceId, 50);
+    const noteRecords = all.filter(
+      (r) => r.localId === localId && r.entityType === "note",
+    );
+
+    if (noteRecords.length === 0) {
+      // No pending ops — the note is already in MongoDB (previously synced).
+      // Return the localId since MongoDB uses it as _id.
+      return localId;
+    }
+
+    // Process all pending records for this note sequentially.
+    let remoteId = localId;
+    for (const record of noteRecords) {
+      await markOperationProcessing(record.id);
+      try {
+        const result = await this.adapter.pushOperation(record);
+        remoteId = result.remoteId;
+        await setRemoteMapping(
+          record.workspaceId,
+          record.entityType,
+          record.localId,
+          result.remoteId,
+        );
+        await markOperationSynced(record.id);
+        this._log(`[immediate] Synced note ${record.localId} → ${result.remoteId}`);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await markOperationFailed(record.id, msg);
+        throw new Error(`Failed to sync note before AI: ${msg}`);
+      }
+    }
+
+    return remoteId;
+  }
+
   // ── Queue Processing ───────────────────────────────────────────────────────
 
   private _scheduleQueuePass(delayMs: number): void {
