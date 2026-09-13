@@ -25,6 +25,11 @@ interface StreamCallbacks {
   onDelta?: (chunk: string) => void;
 }
 
+export interface NoteContext {
+  title?: string;
+  body?: string;
+}
+
 export async function listAIResponses(token: string, noteId: string | number): Promise<CachedAIResponse[]> {
   const response = await apiRequest<CachedAIResponseList>(`/api/protected/ai/response/${noteId}`, {
     method: "GET",
@@ -38,11 +43,17 @@ export async function chatWithAIHttp(
   noteId: string | number,
   message: string,
   aiProvider: AIProvider,
+  noteContext?: NoteContext,
 ): Promise<ChatResponse> {
   return apiRequest<ChatResponse>("/api/protected/ai/chat", {
     method: "POST",
     token,
-    body: { note_id: noteId, message, ai_provider: aiProvider },
+    body: {
+      note_id: noteId,
+      message,
+      ai_provider: aiProvider,
+      ...(noteContext ? { note_context: noteContext } : {}),
+    },
   });
 }
 
@@ -59,6 +70,7 @@ export async function streamAIChat(
   message: string,
   aiProvider: AIProvider,
   callbacks: StreamCallbacks = {},
+  noteContext?: NoteContext,
 ): Promise<{ provider: string; content: string; cached: boolean }> {
   const wsUrl = `${resolveWebSocketBase()}/ws/ai/chat/${noteId}?token=${encodeURIComponent(token)}`;
 
@@ -102,7 +114,13 @@ export async function streamAIChat(
 
     socket.addEventListener("open", () => {
       resetTimer();
-      socket.send(JSON.stringify({ message, ai_provider: aiProvider }));
+      socket.send(
+        JSON.stringify({
+          message,
+          ai_provider: aiProvider,
+          ...(noteContext ? { note_context: noteContext } : {}),
+        })
+      );
     });
 
     socket.addEventListener("message", (event) => {

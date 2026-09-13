@@ -1739,42 +1739,24 @@ export default function App() {
       }
     );
 
-    try {
-      // ── Pre-AI sync gate ──────────────────────────────────────────────────
-      // If this note has never been synced to MongoDB (e.g. created offline),
-      // the backend will return 404. Force-push the note now so the AI call
-      // always finds the note in the cloud.
-      if (authToken !== "local-offline-session-token") {
-        try {
-          await syncService.pushNoteImmediate(String(selectedNote.id));
-        } catch (syncErr) {
-          const syncErrMsg =
-            syncErr instanceof Error
-              ? syncErr.message
-              : "Note could not be synced to the cloud.";
-          setChatMessagesByNote((prev) => ({
-            ...prev,
-            [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
-              message.id === assistantMessageId
-                ? {
-                    ...message,
-                    content: `This note needs to sync before AI can read it. ${syncErrMsg}`,
-                    status: "error" as const,
-                  }
-                : message,
-            ),
-          }));
-          streamer.destroy();
-          return;
-        }
-      }
-      // ── End pre-AI sync gate ──────────────────────────────────────────────
+    const noteContext = {
+      title: selectedNote.title ?? "",
+      body: selectedNote.body ?? "",
+    };
 
-      const streamed = await streamAIChat(authToken, selectedNote.id, prompt, aiProvider, {
-        onDelta: (chunk) => {
-          streamer.enqueue(chunk);
+    try {
+      const streamed = await streamAIChat(
+        authToken,
+        selectedNote.id,
+        prompt,
+        aiProvider,
+        {
+          onDelta: (chunk) => {
+            streamer.enqueue(chunk);
+          },
         },
-      });
+        noteContext,
+      );
 
       if (streamed.cached) {
         streamer.destroy();
@@ -1792,7 +1774,7 @@ export default function App() {
     } catch (streamError) {
       streamer.destroy();
       try {
-        const fallback = await chatWithAIHttp(authToken, selectedNote.id, prompt, aiProvider);
+        const fallback = await chatWithAIHttp(authToken, selectedNote.id, prompt, aiProvider, noteContext);
         setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
@@ -1808,14 +1790,14 @@ export default function App() {
             : streamError instanceof Error
               ? streamError.message
               : "The AI assistant is unavailable right now.";
-        if (detail === "Failed to fetch") {
-          detail = "Unable to reach the server. Please check your network connection or try again.";
+        if (detail === "Failed to fetch" || detail.includes("NetworkError") || detail.includes("network")) {
+          detail = "AI is unavailable because there is no internet connection.";
         }
         setChatMessagesByNote((prev) => ({
           ...prev,
           [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
             message.id === assistantMessageId
-              ? { ...message, content: `AI error: ${detail}`, status: "error" as const }
+              ? { ...message, content: detail.startsWith("AI is unavailable") ? detail : `AI error: ${detail}`, status: "error" as const }
               : message,
           ),
         }));

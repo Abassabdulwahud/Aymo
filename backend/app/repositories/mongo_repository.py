@@ -474,13 +474,17 @@ class AiCacheMongoRepository:
         user_id: str,
         question: str,
         provider: str,
+        content_hash: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        doc = await self.col.find_one({
+        query: Dict[str, Any] = {
             "note_id": str(note_id),
             "user_id": user_id,
             "provider": provider,
             "question": question.strip(),
-        })
+        }
+        if content_hash:
+            query["content_hash"] = content_hash
+        doc = await self.col.find_one(query)
         if not doc:
             return None
         return {
@@ -499,10 +503,11 @@ class AiCacheMongoRepository:
         question: str,
         response: str,
         provider: str,
+        content_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         doc_id = str(uuid.uuid4())
         now = utc_now_iso()
-        doc = {
+        doc: Dict[str, Any] = {
             "_id": doc_id,
             "user_id": user_id,
             "note_id": str(note_id),
@@ -511,6 +516,8 @@ class AiCacheMongoRepository:
             "response": response.strip(),
             "created_at": now,
         }
+        if content_hash:
+            doc["content_hash"] = content_hash
         await self.col.insert_one(doc)
         return {
             "id": doc_id,

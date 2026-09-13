@@ -6,10 +6,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..models.enums import AIProvider
 
 
+class NoteContextPayload(BaseModel):
+    title: Optional[str] = ""
+    body: Optional[str] = ""
+
+
 class AIChatRequest(BaseModel):
     note_id: Union[str, int]
     message: str = Field(min_length=1, max_length=5000)
     ai_provider: Optional[AIProvider] = None
+    note_context: Optional[NoteContextPayload] = None
 
 
 class AIChatResponse(BaseModel):

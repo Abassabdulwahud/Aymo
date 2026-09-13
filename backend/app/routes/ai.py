@@ -13,7 +13,7 @@ from ..repositories.mongo_repository import (
     NoteMongoRepository,
     UserMongoRepository,
 )
-from ..schemas.ai import AIChatRequest, AIChatResponse, AIResponseItem, AIResponseList
+from ..schemas.ai import AIChatRequest, AIChatResponse, AIResponseItem, AIResponseList, NoteContextPayload
 from ..services.ai import AIProviderError
 from ..services.ai.context import build_conversation_context_mongo, build_system_prompt
 from ..services.ai.orchestrator import stream_ai_response
@@ -26,43 +26,84 @@ router = APIRouter(prefix="/api/protected", tags=["ai"])
 ws_router = APIRouter(tags=["ai"])
 
 
-async def _get_mongo_note_or_authorize(db, note_id: str, user_id: str):
+class ResolvedAINote:
+    def __init__(self, title: str, body: str, mongo_note_id: Optional[str] = None):
+        self.title = title
+        self.body = body
+        self.mongo_note_id = mongo_note_id
+
+    @property
+    def content_hash(self) -> str:
+        return hashlib.sha256(f"{self.title}\n{self.body}".encode("utf-8")).hexdigest()[:16]
+
+
+async def resolve_note_for_ai(
+    db,
+    note_id: str,
+    user_id: str,
+    client_note_context: Optional[NoteContextPayload] = None,
+) -> ResolvedAINote:
     """
-    Retrieves note for authorized user.
+    Resolves note context for AI execution without requiring prior synchronization.
 
     Resolution order:
-      1. Direct lookup by note_id in notes collection (fast path).
-      2. Remote-mapping lookup: note_id may be a UUID remoteId assigned by
-         sync/push; resolve it to the actual local_id stored as notes._id.
-    Raises:
-      HTTP 403 Forbidden if note exists under another user_id.
-      HTTP 404 Not Found if note does not exist in MongoDB.
+      1. Check direct lookup / remote_mappings in MongoDB to enforce tenant authorization:
+         - If note exists in MongoDB under ANOTHER user_id -> HTTP 403 Forbidden.
+      2. If note exists in MongoDB under current user_id:
+         - If client_note_context provides title or body, prefer client's freshest local content.
+         - Otherwise use MongoDB note's title & body.
+         - Set mongo_note_id to MongoDB note._id for file/attachment lookups.
+      3. If note does NOT exist in MongoDB at all (e.g. offline-created or unsynced local note):
+         - If client_note_context is provided, construct ResolvedAINote using client's title & body.
+         - If client_note_context is NOT provided, raise HTTP 404 Not Found.
     """
     note_repo = NoteMongoRepository(db)
-    note = await note_repo.get_by_id(str(note_id), user_id)
-    if note is not None:
-        return note
+    mongo_note = await note_repo.get_by_id(str(note_id), user_id)
 
-    # Check if note exists under any user (ownership guard)
-    any_note = await db.notes.find_one({"_id": str(note_id)})
-    if any_note and any_note.get("user_id") != user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Access to this note is not authorized.",
+    if mongo_note is None:
+        # Check if note exists under any other user (tenant isolation guard)
+        any_note = await db.notes.find_one({"_id": str(note_id)})
+        if any_note and any_note.get("user_id") != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access to this note is not authorized.",
+            )
+
+        # Fall back: note_id might be a remoteId from remote_mappings.
+        mapping = await db.remote_mappings.find_one(
+            {"remote_id": str(note_id), "entity_type": "note", "user_id": user_id}
+        )
+        if mapping:
+            local_id = mapping["local_id"]
+            mongo_note = await note_repo.get_by_id(local_id, user_id)
+
+    if mongo_note is not None:
+        # Note exists in MongoDB owned by user
+        title = client_note_context.title if (client_note_context and client_note_context.title is not None) else mongo_note.title
+        body = client_note_context.body if (client_note_context and client_note_context.body is not None) else mongo_note.body
+        return ResolvedAINote(title=title or "", body=body or "", mongo_note_id=mongo_note.id)
+
+    # Note does not exist in MongoDB
+    if client_note_context is not None:
+        return ResolvedAINote(
+            title=client_note_context.title or "",
+            body=client_note_context.body or "",
+            mongo_note_id=None,
         )
 
-    # Fall back: note_id might be a remoteId from remote_mappings.
-    # The sync layer stores notes with _id=local_id but returns a UUID remoteId.
-    mapping = await db.remote_mappings.find_one(
-        {"remote_id": str(note_id), "entity_type": "note", "user_id": user_id}
-    )
-    if mapping:
-        local_id = mapping["local_id"]
-        note = await note_repo.get_by_id(local_id, user_id)
+    raise HTTPException(status_code=404, detail="Note not found.")
+
+
+async def _get_mongo_note_or_authorize(db, note_id: str, user_id: str):
+    resolved = await resolve_note_for_ai(db, note_id, user_id)
+    if resolved.mongo_note_id is not None:
+        note_repo = NoteMongoRepository(db)
+        note = await note_repo.get_by_id(resolved.mongo_note_id, user_id)
         if note is not None:
             return note
-
-    raise HTTPException(status_code=404, detail="Note not found.")
+    # Fallback synthetic note for backwards compatibility if callers expect .title / .body / .id
+    from types import SimpleNamespace
+    return SimpleNamespace(id=str(note_id), title=resolved.title, body=resolved.body)
 
 
 @router.post("/ai/chat", response_model=AIChatResponse)
@@ -79,7 +120,7 @@ async def chat_with_ai(
         )
 
     note_id_str = str(payload.note_id)
-    note = await _get_mongo_note_or_authorize(db, note_id_str, current_user.user_id)
+    resolved = await resolve_note_for_ai(db, note_id_str, current_user.user_id, payload.note_context)
 
     user_repo = UserMongoRepository(db)
     user_doc = await user_repo.get_by_id(current_user.user_id)
@@ -89,12 +130,15 @@ async def chat_with_ai(
     requested_provider = payload.ai_provider.value if payload.ai_provider is not None else None
     provider_name = requested_provider or preferred_ai_provider
 
+    content_hash = resolved.content_hash
+
     ai_cache_repo = AiCacheMongoRepository(db)
     cached = await ai_cache_repo.get_or_create(
         note_id=note_id_str,
         user_id=current_user.user_id,
         question=payload.message,
         provider=provider_name,
+        content_hash=content_hash,
     )
     if cached is not None:
         return AIChatResponse(
@@ -107,16 +151,19 @@ async def chat_with_ai(
     # Fetch recent responses for conversation memory
     recent_responses = await ai_cache_repo.get_cached_responses(note_id_str, current_user.user_id)
 
-    # Fetch attached file docs
-    file_repo = FileMongoRepository(db)
-    file_docs = await file_repo.list_for_note(note_id_str, current_user.user_id)
-    file_summaries = [f"{f.file_name} ({f.file_type}) - status: {f.extraction_status}" for f in file_docs]
-    extracted_items = [{"source": f.file_name, "extracted_text": f.extracted_text} for f in file_docs if f.extracted_text]
+    # Fetch attached file docs if note exists in MongoDB
+    file_summaries = []
+    extracted_items = []
+    if resolved.mongo_note_id:
+        file_repo = FileMongoRepository(db)
+        file_docs = await file_repo.list_for_note(resolved.mongo_note_id, current_user.user_id)
+        file_summaries = [f"{f.file_name} ({f.file_type}) - status: {f.extraction_status}" for f in file_docs]
+        extracted_items = [{"source": f.file_name, "extracted_text": f.extracted_text} for f in file_docs if f.extracted_text]
 
     settings = get_settings()
     context_text = build_conversation_context_mongo(
-        note_title=note.title,
-        note_body=note.body,
+        note_title=resolved.title,
+        note_body=resolved.body,
         current_message=payload.message,
         user_language=user_language,
         recent_responses=recent_responses,
@@ -156,6 +203,7 @@ async def chat_with_ai(
         question=payload.message,
         response=response_text,
         provider=used_provider,
+        content_hash=content_hash,
     )
 
     return AIChatResponse(
@@ -175,7 +223,13 @@ async def list_cached_responses(
     if db is None:
         raise HTTPException(status_code=503, detail="Cloud services temporarily unavailable.")
 
-    await _get_mongo_note_or_authorize(db, str(note_id), current_user.user_id)
+    try:
+        await resolve_note_for_ai(db, str(note_id), current_user.user_id)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise exc
+        # Unsychronized local note: returning any cached responses generated for this local note_id
+
     ai_cache_repo = AiCacheMongoRepository(db)
     items_raw = await ai_cache_repo.get_cached_responses(str(note_id), current_user.user_id)
     items = [AIResponseItem(**item) for item in items_raw]
@@ -207,12 +261,6 @@ async def websocket_chat(websocket: WebSocket, note_id: str):
         await websocket.close(code=4401)
         return
 
-    try:
-        note = await _get_mongo_note_or_authorize(db, str(note_id), user_doc.id)
-    except HTTPException as exc:
-        await websocket.close(code=4403 if exc.status_code == 403 else 4404)
-        return
-
     await websocket.accept()
     ai_cache_repo = AiCacheMongoRepository(db)
     file_repo = FileMongoRepository(db)
@@ -232,11 +280,33 @@ async def websocket_chat(websocket: WebSocket, note_id: str):
                 await websocket.send_json({"type": "error", "detail": "Message cannot be empty."})
                 continue
 
+            note_ctx_raw = data.get("note_context")
+            client_note_context = None
+            if isinstance(note_ctx_raw, dict):
+                client_note_context = NoteContextPayload(
+                    title=note_ctx_raw.get("title", ""),
+                    body=note_ctx_raw.get("body", ""),
+                )
+
+            try:
+                resolved = await resolve_note_for_ai(db, str(note_id), user_doc.id, client_note_context)
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    await websocket.send_json({"type": "error", "detail": "Access to this note is not authorized."})
+                    await websocket.close(code=4403)
+                    return
+                else:
+                    await websocket.send_json({"type": "error", "detail": exc.detail or "Note not found."})
+                    continue
+
+            content_hash = resolved.content_hash
+
             cached = await ai_cache_repo.get_or_create(
                 note_id=str(note_id),
                 user_id=user_doc.id,
                 question=message,
                 provider=provider_name,
+                content_hash=content_hash,
             )
             if cached is not None:
                 await websocket.send_json({
@@ -248,13 +318,17 @@ async def websocket_chat(websocket: WebSocket, note_id: str):
                 continue
 
             recent_responses = await ai_cache_repo.get_cached_responses(str(note_id), user_doc.id)
-            file_docs = await file_repo.list_for_note(str(note_id), user_doc.id)
-            file_summaries = [f"{f.file_name} ({f.file_type}) - status: {f.extraction_status}" for f in file_docs]
-            extracted_items = [{"source": f.file_name, "extracted_text": f.extracted_text} for f in file_docs if f.extracted_text]
+
+            file_summaries = []
+            extracted_items = []
+            if resolved.mongo_note_id:
+                file_docs = await file_repo.list_for_note(resolved.mongo_note_id, user_doc.id)
+                file_summaries = [f"{f.file_name} ({f.file_type}) - status: {f.extraction_status}" for f in file_docs]
+                extracted_items = [{"source": f.file_name, "extracted_text": f.extracted_text} for f in file_docs if f.extracted_text]
 
             context_text = build_conversation_context_mongo(
-                note_title=note.title,
-                note_body=note.body,
+                note_title=resolved.title,
+                note_body=resolved.body,
                 current_message=message,
                 user_language=user_language,
                 recent_responses=recent_responses,
@@ -293,6 +367,7 @@ async def websocket_chat(websocket: WebSocket, note_id: str):
                     question=message,
                     response=full_response,
                     provider=used_provider,
+                    content_hash=content_hash,
                 )
                 await websocket.send_json({
                     "type": "complete",
@@ -304,3 +379,4 @@ async def websocket_chat(websocket: WebSocket, note_id: str):
                 await websocket.send_json({"type": "error", "detail": "The AI provider returned an empty response."})
     except WebSocketDisconnect:
         pass
+

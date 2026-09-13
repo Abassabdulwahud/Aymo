@@ -74,5 +74,73 @@ class TestAIProviderRouter(unittest.TestCase):
         self.assertEqual(type(client_enum), type(client_str))
 
 
+class TestUnsyncedAINoteResolution(unittest.IsolatedAsyncioTestCase):
+    async def test_unsynced_note_with_client_context_resolves_successfully(self):
+        from app.routes.ai import resolve_note_for_ai, NoteContextPayload
+        db = MagicMock()
+        db.notes.find_one = AsyncMock(return_value=None)
+        db.remote_mappings.find_one = AsyncMock(return_value=None)
+
+        ctx = NoteContextPayload(title="ghijj", body="When I come home from school...")
+        resolved = await resolve_note_for_ai(db, "7eeec648-8e5a-4344-bcf9-69d245dc24e5", "user-1", ctx)
+
+        self.assertEqual(resolved.title, "ghijj")
+        self.assertEqual(resolved.body, "When I come home from school...")
+        self.assertIsNone(resolved.mongo_note_id)
+
+    async def test_unsynced_note_without_context_raises_404(self):
+        from app.routes.ai import resolve_note_for_ai
+        from fastapi import HTTPException
+        db = MagicMock()
+        db.notes.find_one = AsyncMock(return_value=None)
+        db.remote_mappings.find_one = AsyncMock(return_value=None)
+
+        with self.assertRaises(HTTPException) as cm:
+            await resolve_note_for_ai(db, "7eeec648-8e5a-4344-bcf9-69d245dc24e5", "user-1", None)
+        self.assertEqual(cm.exception.status_code, 404)
+
+    async def test_note_belonging_to_another_user_raises_403(self):
+        from app.routes.ai import resolve_note_for_ai, NoteContextPayload
+        from fastapi import HTTPException
+        db = MagicMock()
+        
+        async def mock_find_one(query):
+            if query.get("user_id") == "user-1":
+                return None
+            if query.get("_id") == "note-99":
+                return {"_id": "note-99", "user_id": "user-2", "workspace_id": "ws-1"}
+            return None
+
+        db.notes.find_one = AsyncMock(side_effect=mock_find_one)
+
+        ctx = NoteContextPayload(title="Sneaky Title", body="Sneaky Body")
+        with self.assertRaises(HTTPException) as cm:
+            await resolve_note_for_ai(db, "note-99", "user-1", ctx)
+        self.assertEqual(cm.exception.status_code, 403)
+
+
+
+    async def test_synced_note_prefers_client_edits(self):
+        from app.routes.ai import resolve_note_for_ai, NoteContextPayload
+        db = MagicMock()
+        mock_mongo_note = MagicMock(id="note-1", title="Old Cloud Title", body="Old Cloud Body")
+
+        with patch("app.routes.ai.NoteMongoRepository") as MockRepo:
+            MockRepo.return_value.get_by_id = AsyncMock(return_value=mock_mongo_note)
+            ctx = NoteContextPayload(title="New Local Title", body="New Local Body")
+            resolved = await resolve_note_for_ai(db, "note-1", "user-1", ctx)
+
+            self.assertEqual(resolved.title, "New Local Title")
+            self.assertEqual(resolved.body, "New Local Body")
+            self.assertEqual(resolved.mongo_note_id, "note-1")
+
+    async def test_content_hash_changes_when_body_edited(self):
+        from app.routes.ai import ResolvedAINote
+        note1 = ResolvedAINote(title="Test", body="Version 1: Rusty is a dog.")
+        note2 = ResolvedAINote(title="Test", body="Version 2: Rusty is a cat.")
+
+        self.assertNotEqual(note1.content_hash, note2.content_hash)
+
+
 if __name__ == "__main__":
     unittest.main()
