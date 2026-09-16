@@ -42,6 +42,7 @@
 
 import {
   getPendingOperations,
+  getAllQueueRecords,
   markOperationProcessing,
   markOperationSynced,
   markOperationFailed,
@@ -57,6 +58,12 @@ import {
 } from "./syncQueue";
 import { setRemoteMapping } from "./remoteMapping";
 import {
+  getLocalNote,
+  putLocalNote,
+  deleteLocalNotePermanently,
+  type LocalNote,
+} from "./localWorkspaceDatabase";
+import {
   initConnectivityService,
   isOnline,
   onConnectivityChange,
@@ -66,7 +73,10 @@ import type {
   SyncStatus,
   SyncStateRecord,
   SyncQueueRecord,
+  SyncEntityType,
+  SyncOperation,
 } from "./syncTypes";
+
 
 // ─── Retry Policy ─────────────────────────────────────────────────────────────
 
@@ -298,7 +308,189 @@ export class SyncService {
     return remoteId;
   }
 
+  // ── Manual User-Triggered Workspace Synchronization ──────────────────────
+
+  /**
+   * Performs a complete user-initiated workspace synchronization:
+   * 1. Checks connectivity and auth adapter.
+   * 2. Pushes all pending local operations to the cloud.
+   * 3. Pulls cloud changes from MongoDB since lastSyncedAt.
+   * 4. Merges cloud changes into local IndexedDB safely.
+   * 5. Updates syncState and notifies UI listeners.
+   */
+  async performSync(): Promise<{
+    success: boolean;
+    message: string;
+    pushedCount: number;
+    pulledCount: number;
+  }> {
+    if (!this.workspaceId) {
+      throw new Error("Workspace is not initialized.");
+    }
+    if (!this.adapter) {
+      return {
+        success: false,
+        message: "Please log in to sync your workspace.",
+        pushedCount: 0,
+        pulledCount: 0,
+      };
+    }
+    if (!isOnline()) {
+      return {
+        success: false,
+        message: "You're offline. Your notes remain safely stored on this device.",
+        pushedCount: 0,
+        pulledCount: 0,
+      };
+    }
+
+    this._setStatus("syncing");
+    let pushedCount = 0;
+    let pulledCount = 0;
+
+    try {
+      // 1. Reset failed ops and push all pending local operations
+      await resetFailedOperations(this.workspaceId);
+      const pendingRecords = await getAllQueueRecords(this.workspaceId);
+      const awaitingPush = pendingRecords.filter(
+        (r) => r.status === "pending" || r.status === "failed",
+      );
+
+      for (const record of awaitingPush) {
+        try {
+          await this._processRecord(this.adapter, record);
+          pushedCount++;
+        } catch (err) {
+          this._log("Error pushing record during manual sync:", err);
+          // Preserve local data & record failure, continue with remaining records
+        }
+      }
+
+      // 2. Fetch remote changes from cloud
+      const savedState = await getSyncState(this.workspaceId);
+      const since = savedState?.lastSyncedAt ?? null;
+      const remoteChanges = await this.adapter.fetchChanges(this.workspaceId, since);
+
+      // 3. Reconcile pulled changes into local IndexedDB
+      if (remoteChanges.length > 0) {
+        pulledCount = await this._applyRemoteChanges(remoteChanges);
+      }
+
+      // 4. Update sync state and notify listeners
+      await this._refreshStatus();
+      const now = new Date().toISOString();
+      await putSyncState({
+        workspaceId: this.workspaceId,
+        status: "synced",
+        lastSyncedAt: now,
+        pendingCount: 0,
+        lastError: null,
+        updatedAt: now,
+      });
+      this._setStatus("synced");
+
+      return {
+        success: true,
+        message: "Workspace synced successfully.",
+        pushedCount,
+        pulledCount,
+      };
+    } catch (err: unknown) {
+      const errMsg =
+        err instanceof Error
+          ? err.message
+          : "Sync couldn't complete. Your local notes are safe. Try again.";
+      this._lastError = errMsg;
+      this._setStatus("error");
+      return {
+        success: false,
+        message:
+          errMsg.includes("Cloud") || errMsg.includes("500")
+            ? "Sync couldn't complete. Your local notes are safe. Try again."
+            : errMsg,
+        pushedCount,
+        pulledCount,
+      };
+    }
+  }
+
+  private async _applyRemoteChanges(
+    changes: Array<{
+      entityType: SyncEntityType;
+      operation: SyncOperation;
+      localId: string | null;
+      remoteId: string;
+      payload: Record<string, unknown>;
+      updatedAt: string;
+    }>,
+  ): Promise<number> {
+    let appliedCount = 0;
+    if (!this.workspaceId) return 0;
+
+    for (const change of changes) {
+      if (change.entityType === "note") {
+        const localId = change.localId || change.remoteId;
+        const existingLocal = await getLocalNote(localId);
+
+        if (change.operation === "delete" || change.payload.deletedAt) {
+          if (existingLocal) {
+            if (change.payload.permanent) {
+              await deleteLocalNotePermanently(localId);
+            } else {
+              await putLocalNote({ ...existingLocal, deletedAt: change.updatedAt });
+            }
+            appliedCount++;
+          }
+        } else {
+          // Create or update note in local IndexedDB
+          // If local note has pending unsynced queue items, local edits win to avoid overwriting user's un-pushed work
+          const pendingOps = await getAllQueueRecords(this.workspaceId);
+          const hasPendingLocalEdits = pendingOps.some(
+            (r) =>
+              r.localId === localId &&
+              (r.status === "pending" || r.status === "processing"),
+          );
+
+          if (!hasPendingLocalEdits || !existingLocal) {
+            const updatedNote: LocalNote = {
+              id: localId,
+              workspaceId: this.workspaceId,
+              title: String(change.payload.title ?? existingLocal?.title ?? ""),
+              body: String(change.payload.body ?? existingLocal?.body ?? ""),
+              isPinned: Boolean(
+                change.payload.is_pinned ?? change.payload.isPinned ?? false,
+              ),
+              isFavorited: Boolean(
+                change.payload.is_favorited ?? change.payload.isFavorited ?? false,
+              ),
+              tags: Array.isArray(change.payload.tags)
+                ? change.payload.tags.map(String)
+                : existingLocal?.tags ?? [],
+              files: Array.isArray(change.payload.files)
+                ? change.payload.files
+                : existingLocal?.files ?? [],
+              deletedAt: (change.payload.deleted_at ??
+                change.payload.deletedAt ??
+                null) as string | null,
+              createdAt: String(
+                change.payload.created_at ??
+                  change.payload.createdAt ??
+                  new Date().toISOString(),
+              ),
+              updatedAt: change.updatedAt,
+            };
+            await putLocalNote(updatedNote);
+            await setRemoteMapping(this.workspaceId, "note", localId, change.remoteId);
+            appliedCount++;
+          }
+        }
+      }
+    }
+    return appliedCount;
+  }
+
   // ── Queue Processing ───────────────────────────────────────────────────────
+
 
   private _scheduleQueuePass(delayMs: number): void {
     if (this._queueScheduled) return;

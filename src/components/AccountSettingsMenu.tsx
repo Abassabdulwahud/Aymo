@@ -7,8 +7,11 @@ interface AccountSettingsMenuProps {
   email: string;
   darkMode: boolean;
   language: LanguageCode;
+  syncStatusText?: string;
+  isSyncing?: boolean;
   onThemeChange: (next: boolean) => void;
   onLanguageChange: (next: LanguageCode) => void;
+  onSync?: () => void;
   onLogout: () => void;
 }
 
@@ -19,10 +22,14 @@ export function AccountSettingsMenu({
   email,
   darkMode,
   language,
+  syncStatusText,
+  isSyncing,
   onThemeChange,
   onLanguageChange,
+  onSync,
   onLogout,
 }: AccountSettingsMenuProps) {
+
   const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const [isThemeOpen, setIsThemeOpen] = useState(false);
@@ -151,6 +158,23 @@ export function AccountSettingsMenu({
                 ))}
               </div>
             ) : null}
+          </div>
+
+          <div className="account-menu-section">
+            <button
+              className="account-menu-row account-menu-sync"
+              type="button"
+              disabled={isSyncing}
+              onClick={() => {
+                onSync?.();
+              }}
+
+            >
+              <span>Sync</span>
+              {syncStatusText ? (
+                <span className="account-menu-row-meta">{syncStatusText}</span>
+              ) : null}
+            </button>
           </div>
 
           <button

@@ -75,6 +75,8 @@ import {
 import { WorkspaceHealthPanel } from "./components/WorkspaceHealthPanel";
 import { syncService } from "./services/syncService";
 import { MongoDBAdapter } from "./services/mongoDbAdapter";
+import type { SyncStatus } from "./services/syncTypes";
+
 
 
 
@@ -351,6 +353,65 @@ export default function App() {
   const [profile, setProfile] = useState({ name: "Aya Morgan", email: "aya@aymo.app" });
   const [isBusy, setIsBusy] = useState(false);
   const [homeError, setHomeError] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("disabled");
+
+  const [syncBannerMessage, setSyncBannerMessage] = useState<string | null>(null);
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
+
+  useEffect(() => {
+    const unsubStatus = syncService.onStatusChange((status) => {
+      setSyncStatus(status);
+    });
+    return () => {
+      unsubStatus();
+    };
+  }, []);
+
+  const handleManualSync = async () => {
+    if (!isAuthenticated || !authToken || authToken === "local-offline-session-token") {
+      setSyncBannerMessage("Please log in to sync your workspace.");
+      setTimeout(() => setSyncBannerMessage(null), 5000);
+      return;
+    }
+    if (!navigator.onLine) {
+      setSyncBannerMessage("You're offline. Your notes remain safely stored on this device.");
+      setTimeout(() => setSyncBannerMessage(null), 5000);
+      return;
+    }
+
+    setIsManualSyncing(true);
+    setSyncBannerMessage("Syncing workspace...");
+    try {
+      const result = await syncService.performSync();
+      const workspaceId = await getActiveWorkspaceId();
+      if (workspaceId) {
+        const localNotes = await listLocalNotes(workspaceId, false);
+        const mappedNotes = localNotes.map((note) => mapLocalNoteToHomeNote(note, noteLabels));
+        setNotes(mappedNotes);
+      }
+      setSyncBannerMessage(result.message);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Sync couldn't complete. Your local notes are safe. Try again.";
+      setSyncBannerMessage(msg);
+    } finally {
+      setIsManualSyncing(false);
+      setTimeout(() => setSyncBannerMessage(null), 5000);
+    }
+  };
+
+  const syncStatusText = isManualSyncing
+    ? "Syncing..."
+    : syncStatus === "synced"
+      ? "Synced"
+      : syncStatus === "waiting_for_internet"
+        ? "Offline"
+        : syncStatus === "error"
+          ? "Sync error"
+          : "Sync";
+
   const [openNoteMenuId, setOpenNoteMenuId] = useState<string | number | null>(null);
   const [chatMessagesByNote, setChatMessagesByNote] = useState<Record<string | number, ChatMessage[]>>({});
   
@@ -1896,13 +1957,22 @@ export default function App() {
               email={profile.email}
               darkMode={darkMode}
               language={language}
+              syncStatusText={syncStatusText}
+              isSyncing={isManualSyncing}
               onThemeChange={handleThemeChange}
               onLanguageChange={handleLanguageChange}
+              onSync={handleManualSync}
               onLogout={handleLogout}
             />
           </div>
         </div>
       </header>
+      {syncBannerMessage ? (
+        <div className="sync-banner-notification" style={{ padding: "8px 16px", backgroundColor: "#3b82f6", color: "#ffffff", fontSize: "14px", fontWeight: 500, textAlign: "center" }}>
+          {syncBannerMessage}
+        </div>
+      ) : null}
+
 
       <main className="note-workspace">
         <ResizableNoteWorkspace
@@ -2043,12 +2113,22 @@ export default function App() {
               email={profile.email}
               darkMode={darkMode}
               language={language}
+              syncStatusText={syncStatusText}
+              isSyncing={isManualSyncing}
               onThemeChange={handleThemeChange}
               onLanguageChange={handleLanguageChange}
+              onSync={handleManualSync}
               onLogout={handleLogout}
             />
           </div>
         </header>
+
+        {syncBannerMessage ? (
+          <div className="sync-banner-notification" style={{ padding: "8px 16px", backgroundColor: "#3b82f6", color: "#ffffff", fontSize: "14px", fontWeight: 500, textAlign: "center", borderRadius: "8px", marginBottom: "16px" }}>
+            {syncBannerMessage}
+          </div>
+        ) : null}
+
 
         {homeError ? <p className="auth-error">{homeError}</p> : null}
 
