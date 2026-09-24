@@ -9,7 +9,7 @@
       "destination": "https://aymo.onrender.com/auth/:path*"
     },
     {
-      "source": "/((?!assets/).*)",
+      "source": "/((?!assets/|sw\\.js|manifest\\.json|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)).*)",
       "destination": "/index.html"
     }
   ]

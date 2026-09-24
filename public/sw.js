@@ -1,16 +1,14 @@
-// AYMO Service Worker — Phase 1B
-// Strategy: Cache-First for assets, App-Shell for navigation.
+// AYMO Service Worker — Phase 3A
+// Strategy: Cache-First for static assets, App-Shell for navigation.
 // The app shell (index.html) is served from cache so AYMO loads offline.
 
-const CACHE_NAME = "aymo-shell-v11";
+const CACHE_NAME = "aymo-shell-v12";
 
 // Files to pre-cache on install.
-// index.html is the only guaranteed stable path at build time.
-// All other assets are cached dynamically on first fetch.
-const PRECACHE_URLS = ["/"];
+const PRECACHE_URLS = ["/", "/index.html", "/manifest.json"];
 
 // ─── Install ──────────────────────────────────────────────────────────────────
-// Pre-cache the app shell and immediately take control.
+// Pre-cache the app shell and take immediate control.
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
@@ -21,7 +19,7 @@ self.addEventListener("install", (event) => {
 });
 
 // ─── Activate ─────────────────────────────────────────────────────────────────
-// Remove any stale caches from previous SW versions and claim all clients.
+// Remove stale caches from previous SW versions and claim clients.
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
@@ -42,8 +40,7 @@ self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Only intercept same-origin requests and navigation requests to this origin.
-  // Skip cross-origin requests (Google Fonts, CDNs, API calls, WebSockets).
+  // Skip cross-origin requests, WebSockets, and API/Auth endpoints.
   if (
     url.origin !== self.location.origin ||
     request.url.startsWith("ws:") ||
@@ -52,7 +49,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Skip API and backend requests — never cache dynamic data.
+  // Never cache API or backend authentication endpoints.
   if (
     url.pathname.startsWith("/api/") ||
     url.pathname.startsWith("/auth/") ||
@@ -62,17 +59,23 @@ self.addEventListener("fetch", (event) => {
   }
 
   // ── Navigation requests (HTML) → App Shell strategy ──────────────────────
-  // Always serve index.html from cache so the app loads offline.
-  // Fall back to network if cache misses (first load).
+  // Return cached app shell (index.html) so AYMO loads instantly offline.
   if (request.mode === "navigate") {
     event.respondWith(
-      caches.match("/").then((cached) => {
-        if (cached) return cached;
-        return fetch(request).then((response) => {
-          if (response.ok) {
-            caches.open(CACHE_NAME).then((cache) => cache.put("/", response.clone()));
-          }
-          return response;
+      caches.match("/").then((cachedRoot) => {
+        if (cachedRoot) return cachedRoot;
+        return caches.match("/index.html").then((cachedHtml) => {
+          if (cachedHtml) return cachedHtml;
+          return fetch(request).then((response) => {
+            if (response.ok) {
+              const copy = response.clone();
+              caches.open(CACHE_NAME).then((cache) => {
+                cache.put("/", copy);
+                cache.put("/index.html", response.clone());
+              });
+            }
+            return response;
+          });
         });
       })
     );
@@ -80,15 +83,15 @@ self.addEventListener("fetch", (event) => {
   }
 
   // ── Static assets → Cache-First with Network Fallback ─────────────────────
-  // JS bundles, CSS, fonts, images, icons — serve from cache instantly.
-  // On cache miss, fetch from network and store for next time.
+  // Serve JS bundles, CSS, fonts, and images from cache. On cache miss, fetch from network.
   event.respondWith(
     caches.match(request).then((cached) => {
-      if (cached) return cached;
+      if (cached) {
+        return cached;
+      }
 
       return fetch(request)
         .then((response) => {
-          // Only cache successful, non-opaque responses.
           if (!response || response.status !== 200 || response.type === "opaque") {
             return response;
           }
@@ -101,9 +104,7 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
         .catch(() => {
-          // If the network is unavailable and we have no cache entry,
-          // return nothing (browser will show its own offline indicator
-          // for sub-resources, but the app shell already loaded).
+          // If offline and asset is missing, return nothing
         });
     })
   );

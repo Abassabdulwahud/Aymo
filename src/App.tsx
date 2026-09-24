@@ -516,7 +516,7 @@ export default function App() {
       // Local-first: the user's workspace is always accessible. No JWT means the
       // user is simply working locally. Mark as unauthenticated (no cloud features)
       // but still open the workspace — do NOT redirect to login.
-      if (!authToken) {
+      if (!authToken || !navigator.onLine) {
         if (mounted) {
           setAuthenticated(false);
           setSessionStatus("ready"); // workspace opens normally
