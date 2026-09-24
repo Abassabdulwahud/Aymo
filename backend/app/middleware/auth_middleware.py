@@ -8,6 +8,7 @@ from ..utils.security import decode_token
 # Clients need these to know whether cloud sync is available before logging in.
 _PUBLIC_PROTECTED_PATHS: set[str] = {
     "/api/protected/sync/status",
+    "/api/protected/ai/chat",
 }
 
 

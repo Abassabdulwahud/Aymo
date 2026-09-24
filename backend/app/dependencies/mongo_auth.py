@@ -96,6 +96,55 @@ async def get_current_mongo_user(request: Request) -> AuthenticatedUser:
     )
 
 
+async def get_optional_mongo_user(request: Request) -> Optional[AuthenticatedUser]:
+    """
+    FastAPI dependency that attempts to resolve the authenticated user from a JWT if present.
+    If no Authorization header is provided, returns None (anonymous/local mode).
+    If an Authorization header is provided but invalid or expired, raises HTTP 401.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+
+    raw_token = auth_header[len("Bearer "):].strip()
+    if not raw_token:
+        return None
+
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired authentication token. Please log in again.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        payload = decode_token(raw_token)
+    except ValueError:
+        raise credentials_exception
+
+    email: Optional[str] = payload.get("sub")
+    if not email:
+        raise credentials_exception
+
+    db = get_mongo_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud services are temporarily unavailable. Local notes continue working normally.",
+        )
+
+    from ..repositories.mongo_repository import UserMongoRepository
+    user_repo = UserMongoRepository(db)
+    user_doc = await user_repo.get_by_email(email)
+    if not user_doc:
+        logger.warning(f"[AUTH] Valid JWT for email={email} but no user in MongoDB.")
+        raise credentials_exception
+
+    return AuthenticatedUser(
+        user_id=user_doc.id,
+        email=user_doc.email,
+    )
+
+
 async def require_workspace_access(
     workspace_id: str,
     current_user: AuthenticatedUser

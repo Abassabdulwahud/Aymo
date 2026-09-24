@@ -172,6 +172,16 @@ export class SyncService {
     }
   }
 
+  /**
+   * Remove the cloud adapter (e.g. when the user logs out).
+   * The service keeps running locally; the queue is preserved for the next
+   * time the user authenticates and an adapter is registered again.
+   */
+  unregisterAdapter(): void {
+    this.adapter = null;
+    this._log("Adapter unregistered — operating in local-only mode.");
+  }
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   /**

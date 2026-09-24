@@ -30,7 +30,8 @@ export interface NoteContext {
   body?: string;
 }
 
-export async function listAIResponses(token: string, noteId: string | number): Promise<CachedAIResponse[]> {
+export async function listAIResponses(token: string | null | undefined, noteId: string | number): Promise<CachedAIResponse[]> {
+  if (!token) return [];
   const response = await apiRequest<CachedAIResponseList>(`/api/protected/ai/response/${noteId}`, {
     method: "GET",
     token,
@@ -39,7 +40,7 @@ export async function listAIResponses(token: string, noteId: string | number): P
 }
 
 export async function chatWithAIHttp(
-  token: string,
+  token: string | null | undefined,
   noteId: string | number,
   message: string,
   aiProvider: AIProvider,
@@ -47,7 +48,7 @@ export async function chatWithAIHttp(
 ): Promise<ChatResponse> {
   return apiRequest<ChatResponse>("/api/protected/ai/chat", {
     method: "POST",
-    token,
+    token: token ?? undefined,
     body: {
       note_id: noteId,
       message,
@@ -65,14 +66,15 @@ function resolveWebSocketBase(): string {
 }
 
 export async function streamAIChat(
-  token: string,
+  token: string | null | undefined,
   noteId: string | number,
   message: string,
   aiProvider: AIProvider,
   callbacks: StreamCallbacks = {},
   noteContext?: NoteContext,
 ): Promise<{ provider: string; content: string; cached: boolean }> {
-  const wsUrl = `${resolveWebSocketBase()}/ws/ai/chat/${noteId}?token=${encodeURIComponent(token)}`;
+  const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
+  const wsUrl = `${resolveWebSocketBase()}/ws/ai/chat/${noteId}${tokenQuery}`;
 
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(wsUrl);

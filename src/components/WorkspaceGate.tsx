@@ -88,7 +88,17 @@ export function WorkspaceGate({ children }: WorkspaceGateProps) {
         return;
       }
 
-      setGateState(workspaces.length > 0 ? { status: "select", workspaces } : { status: "empty", workspaces });
+      if (workspaces.length > 0) {
+        setGateState({ status: "select", workspaces });
+        return;
+      }
+
+      // ── First launch: Automatically create default local workspace ──────────
+      // The user enters AYMO immediately without needing to fill out a workspace form.
+      const defaultWorkspace = await createLocalWorkspace("Personal Workspace");
+      const updatedHealth = await getStorageHealth();
+      setStorageHealth(updatedHealth);
+      setGateState({ status: "ready", workspace: defaultWorkspace });
     } catch (caught) {
       setGateState({
         status: "unavailable",

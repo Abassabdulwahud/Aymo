@@ -55,6 +55,7 @@ import {
   listLocalNotes,
   getLocalNote,
   getActiveWorkspaceId,
+  createLocalWorkspace,
   putLocalAttachmentBlob,
   getLocalAttachmentBlob,
   deleteLocalAttachmentBlob,
@@ -111,14 +112,20 @@ type SpeechRecognitionInstance = {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
 
-function ProtectedRoute({ isAuthenticated, children }: { isAuthenticated: boolean; children: JSX.Element }) {
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-
+/**
+ * Local-first: the workspace is always accessible, authentication is not required.
+ * This component simply renders its children unconditionally.
+ * It keeps the same prop signature so call-sites don't need to change.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function ProtectedRoute({ isAuthenticated: _isAuthenticated, children }: { isAuthenticated: boolean; children: JSX.Element }) {
   return children;
 }
 
+/**
+ * Auth pages (login/signup) redirect to /home if the user is already authenticated.
+ * Unauthenticated users can still visit these pages deliberately.
+ */
 function PublicRoute({ isAuthenticated, children }: { isAuthenticated: boolean; children: JSX.Element }) {
   if (isAuthenticated) {
     return <Navigate to="/home" replace />;
@@ -368,9 +375,10 @@ export default function App() {
   }, []);
 
   const handleManualSync = async () => {
-    if (!isAuthenticated || !authToken || authToken === "local-offline-session-token") {
-      setSyncBannerMessage("Please log in to sync your workspace.");
-      setTimeout(() => setSyncBannerMessage(null), 5000);
+    // ── Not authenticated: guide user through login first ─────────────────────
+    // After login the user returns to the workspace and can re-press Sync.
+    if (!isAuthenticated || !authToken) {
+      navigate("/login?returnTo=sync");
       return;
     }
     if (!navigator.onLine) {
@@ -504,23 +512,15 @@ export default function App() {
     const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
     const restoreSession = async () => {
+      // ── No stored JWT ─────────────────────────────────────────────────────────
+      // Local-first: the user's workspace is always accessible. No JWT means the
+      // user is simply working locally. Mark as unauthenticated (no cloud features)
+      // but still open the workspace — do NOT redirect to login.
       if (!authToken) {
         if (mounted) {
           setAuthenticated(false);
-          setSessionStatus("unauthenticated");
+          setSessionStatus("ready"); // workspace opens normally
           setIsWorkspaceLoading(false);
-        }
-        return;
-      }
-
-      if (authToken === "local-offline-session-token") {
-        if (mounted) {
-          setProfile({
-            name: "Offline User",
-            email: "offline@aymo.app",
-          });
-          setAuthenticated(true);
-          setSessionStatus("ready");
         }
         return;
       }
@@ -543,13 +543,14 @@ export default function App() {
           if (!mounted) return;
 
           // True auth failure (401) — token is invalid or expired.
-          // Wipe the token immediately; do not retry.
+          // Clear the token and revert to anonymous local mode (do NOT navigate
+          // to /login — the workspace remains open locally).
           if (isAuthFailure(err)) {
             clearAuthToken();
             setAuthToken(null);
             setAuthenticated(false);
             setIsWorkspaceLoading(false);
-            setSessionStatus("unauthenticated");
+            setSessionStatus("ready"); // workspace stays open
             return;
           }
 
@@ -558,20 +559,15 @@ export default function App() {
           if (attempt < MAX_RETRIES) {
             if (mounted) setSessionStatus("retrying");
             await delay(RETRY_DELAY_MS);
-            // Re-check mounted after the delay in case component unmounted.
             if (!mounted) return;
           } else {
-            // All retries exhausted — the backend is unreachable (CORS,
-            // network down, cold-start timeout, etc.).
-            // We cannot validate the stored token, so clear it and send
-            // the user to Login. This prevents the "Restoring your session…"
-            // screen from showing forever.
+            // All retries exhausted — backend unreachable.
+            // Keep the token in localStorage so the next online session can
+            // restore auth automatically. Open the workspace in local mode.
             if (mounted) {
-              clearAuthToken();
-              setAuthToken(null);
               setAuthenticated(false);
               setIsWorkspaceLoading(false);
-              setSessionStatus("unauthenticated");
+              setSessionStatus("ready"); // workspace stays open
             }
           }
         }
@@ -594,23 +590,31 @@ export default function App() {
           setIsWorkspaceLoading(true);
         }
         
-        const workspaceId = await getActiveWorkspaceId();
+        let workspaceId = await getActiveWorkspaceId();
         if (!workspaceId) {
-          if (mounted) {
-            setIsWorkspaceLoading(false);
-            setNotes([]);
-            setTagCatalog([]);
-            setSelectedId(null);
+          // ── First launch: create a default local workspace automatically ─────
+          // The user can start working immediately — no account required.
+          try {
+            const ws = await createLocalWorkspace("Personal Workspace");
+            workspaceId = ws.id;
+          } catch (createErr) {
+            console.error("[AYMO] Could not create default workspace:", createErr);
+            if (mounted) {
+              setIsWorkspaceLoading(false);
+              setNotes([]);
+              setTagCatalog([]);
+              setSelectedId(null);
+            }
+            return;
           }
-          return;
         }
 
         // Initialize and start SyncService
         try {
           await syncService.initialize(workspaceId);
 
-          // Real signed-in session → use JWT
-          if (authToken && authToken !== "local-offline-session-token") {
+          // Register adapter when user is authenticated
+          if (authToken) {
             syncService.registerAdapter(new MongoDBAdapter(authToken));
           }
 
@@ -775,21 +779,25 @@ export default function App() {
   const finalizeAuth = async (token: string) => {
     saveAuthToken(token);
     setAuthToken(token);
-    if (token === "local-offline-session-token") {
-      setProfile({
-        name: "Offline User",
-        email: "offline@aymo.app",
-      });
-    } else {
-      const user = await fetchCurrentUser(token);
-      setProfile({
-        name: user.full_name || user.email.split("@")[0] || t("app.sessionUserFallback"),
-        email: user.email,
-      });
-    }
+    const user = await fetchCurrentUser(token);
+    setProfile({
+      name: user.full_name || user.email.split("@")[0] || t("app.sessionUserFallback"),
+      email: user.email,
+    });
+    // Register adapter immediately so sync can run right after login.
+    syncService.registerAdapter(new MongoDBAdapter(token));
     setAuthenticated(true);
     setSessionStatus("ready");
-    navigate("/home", { replace: true });
+
+    // If the user clicked Sync → Login, return them to /home and auto-trigger sync.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("returnTo") === "sync") {
+      navigate("/home", { replace: true });
+      // Small delay so workspace hydration completes before sync starts.
+      setTimeout(() => void handleManualSync(), 800);
+    } else {
+      navigate("/home", { replace: true });
+    }
   };
 
   const handleEmailAuth = async ({
@@ -885,10 +893,6 @@ export default function App() {
       if (!authToken || !selectedNote) {
         return;
       }
-      // Local-offline sessions have no cloud AI history — skip the backend call.
-      if (authToken === "local-offline-session-token") {
-        return;
-      }
       if (chatMessagesByNote[selectedNote.id]) {
         return;
       }
@@ -920,8 +924,6 @@ export default function App() {
   // Fetch annotations when active note or its files change
   useEffect(() => {
     if (!authToken || !selectedNote) return;
-    // Local-offline sessions have no cloud annotations — skip the backend call.
-    if (authToken === "local-offline-session-token") return;
 
     let active = true;
     const fetchAllAnnotations = async () => {
@@ -1149,9 +1151,6 @@ export default function App() {
 
   const refreshNoteFiles = async () => {
     if (!authToken || !selectedNote) return;
-    // ── Skip backend poll in local-offline mode ───────────────────────────
-    // All uploads are stored locally; there is no server to poll.
-    if (authToken === "local-offline-session-token") return;
 
     // If we just finished an upload < 2s ago, skip this poll tick. The backend
     // may not yet have the new record, and an early poll would briefly show the
@@ -1390,118 +1389,62 @@ export default function App() {
       )
     );
 
-    // ── LOCAL-FIRST PATH ─────────────────────────────────────────────────────
-    // When offline (or explicitly in local-only mode), skip the REST API call.
-    // Each file is stored as a raw Blob in IndexedDB and resolved on-demand.
-    if (authToken === "local-offline-session-token") {
-      try {
-        const localItems: UploadedItem[] = [];
-        const workspaceId = await getActiveWorkspaceId() || "";
-        for (const file of Array.from(files)) {
-          const meta = await saveLocalAttachment(file, String(selectedNote.id), workspaceId);
-          localItems.push({
-            id: meta.id,
-            name: meta.fileName,
-            kind: meta.kind,
-            sizeLabel: meta.sizeLabel,
-            addedAt: noteLabels.justNow,
-            extractionStatus: "completed",
-          });
-        }
-
-        // Persist file metadata on the local note (no Blob/Object URL — only serialisable fields).
-        try {
-          const localNote = await getLocalNote(String(selectedNote.id));
-          if (localNote) {
-            const metaEntries = localItems.map((item) => ({
-              id: item.id,
-              name: item.name,
-              kind: item.kind,
-              sizeLabel: item.sizeLabel,
-              addedAt: item.addedAt,
-              extractionStatus: item.extractionStatus,
-            }));
-            await lnsUpdateNote({ ...localNote, files: [...(localNote.files ?? []), ...metaEntries] });
-          }
-        } catch (metaErr) {
-          console.error("[AYMO] Failed to save file metadata to local note:", metaErr);
-        }
-
-        // Replace temp placeholders with the real local entries in React state.
-        setNotes((prev) =>
-          prev.map((note) => {
-            if (note.id !== noteIdSnapshot) return note;
-            const nonTemp = note.uploads.filter((u) => !(typeof u.id === "number" && u.id < 0));
-            return { ...note, uploads: [...localItems, ...nonTemp] };
-          })
-        );
-      } catch (err) {
-        // Last-resort: clear the stuck temp items so the UI doesn't hang
-        console.error("[AYMO] Local upload failed entirely:", err);
-        setNotes((prev) =>
-          prev.map((note) => {
-            if (note.id !== noteIdSnapshot) return note;
-            return { ...note, uploads: note.uploads.filter((u) => !(typeof u.id === "number" && u.id < 0)) };
-          })
-        );
-        window.alert("Could not save the attachment locally. Please reload the page and try again.");
-      }
-      return;
-    }
-    // ── END LOCAL-FIRST PATH ──────────────────────────────────────────────────
-
-    // Step 2: Perform the actual upload(s).
-    let uploaded: BackendFile[];
+    // ── LOCAL-FIRST UPLOAD (all users, always) ────────────────────────────────
+    // Every file is stored as a raw Blob in IndexedDB first.
+    // This works whether the user is authenticated or not, online or offline.
+    // Cloud sync happens separately during explicit Sync operations.
     try {
-      uploaded = await Promise.all(
-        Array.from(files).map((file) => uploadFile(authToken, selectedNote.id as any, file))
-      );
-    } catch (error) {
-      // Upload failed — replace temp entries with an error state and bail out.
+      const localItems: UploadedItem[] = [];
+      const workspaceId = await getActiveWorkspaceId() || "";
+      for (const file of Array.from(files)) {
+        const meta = await saveLocalAttachment(file, String(selectedNote.id), workspaceId);
+        localItems.push({
+          id: meta.id,
+          name: meta.fileName,
+          kind: meta.kind,
+          sizeLabel: meta.sizeLabel,
+          addedAt: noteLabels.justNow,
+          extractionStatus: "completed",
+        });
+      }
+
+      // Persist file metadata on the local note record (serialisable fields only — no Blob or Object URL).
+      try {
+        const localNote = await getLocalNote(String(selectedNote.id));
+        if (localNote) {
+          const metaEntries = localItems.map((item) => ({
+            id: item.id,
+            name: item.name,
+            kind: item.kind,
+            sizeLabel: item.sizeLabel,
+            addedAt: item.addedAt,
+            extractionStatus: item.extractionStatus,
+          }));
+          await lnsUpdateNote({ ...localNote, files: [...(localNote.files ?? []), ...metaEntries] });
+        }
+      } catch (metaErr) {
+        console.error("[AYMO] Failed to save file metadata to local note:", metaErr);
+      }
+
+      // Replace temp placeholder cards with the real local entries in React state.
       setNotes((prev) =>
         prev.map((note) => {
           if (note.id !== noteIdSnapshot) return note;
-          return {
-            ...note,
-            uploads: note.uploads.map((u) =>
-              typeof u.id === "number" && u.id < 0
-                ? { ...u, extractionStatus: "failed", extractionError: "Upload failed. Please try again." }
-                : u
-            ),
-          };
+          const nonTemp = note.uploads.filter((u) => !(typeof u.id === "number" && u.id < 0));
+          return { ...note, uploads: [...localItems, ...nonTemp] };
         })
       );
-      window.alert(error instanceof Error ? error.message : t("app.uploadRemoveError"));
-      return;
+    } catch (err) {
+      // Clear stuck temp items so the UI doesn't hang.
+      console.error("[AYMO] Local upload failed entirely:", err);
+      setNotes((prev) =>
+        prev.map((note) => {
+          if (note.id !== noteIdSnapshot) return note;
+          return { ...note, uploads: note.uploads.filter((u) => !(typeof u.id === "number" && u.id < 0)) };
+        })
+      );
+      window.alert("Could not save the attachment locally. Please reload the page and try again.");
     }
-
-    // Mark the timestamp so the polling cooldown kicks in for 2s.
-    lastUploadAtRef.current = Date.now();
-
-    // Register real IDs in the pending set so a concurrent poll that fires
-    // before our state update completes cannot shadow them.
-    for (const f of uploaded) {
-      pendingUploadIdsRef.current.add(f.id);
-    }
-
-    // Step 3: Replace the temp placeholder entries with the real backend entries.
-    // We drop ALL negative-ID entries for this note and prepend the real uploads.
-    setNotes((prev) =>
-      prev.map((note) => {
-        if (note.id !== noteIdSnapshot) return note;
-        const realMapped = uploaded.map((f) => mapFileToUpload(f, noteLabels.justNow));
-        const nonTempExisting = note.uploads.filter((u) => typeof u.id === "number" && u.id >= 0);
-        return { ...note, uploads: [...realMapped, ...nonTempExisting] };
-      })
-    );
-
-    // Now that state is updated, remove from the pending set — polling can
-    // include these IDs from this point on without risk of a race.
-    for (const f of uploaded) {
-      pendingUploadIdsRef.current.delete(f.id);
-    }
-
-    // Step 4: Fire extraction queuing in the background is disabled.
   };
 
   const handleAddLink = async () => {
@@ -1513,37 +1456,21 @@ export default function App() {
   };
 
   const handleRemoveUpload = async (fileId: string | number) => {
-    if (!authToken || !selectedNote) return;
+    if (!selectedNote) return;
 
-    // ── LOCAL-FIRST PATH ──────────────────────────────────────────────────────
-    if (authToken === "local-offline-session-token") {
-      try {
-        // Remove the blob from IndexedDB (best-effort — string IDs are local UUIDs).
-        if (typeof fileId === "string") {
-          await deleteLocalAttachmentById(fileId);
-        }
-        // Remove the metadata from the local note.
-        const localNote = await getLocalNote(String(selectedNote.id));
-        if (localNote) {
-          const updatedFiles = (localNote.files ?? []).filter((f: any) => f.id !== fileId);
-          await lnsUpdateNote({ ...localNote, files: updatedFiles });
-        }
-        setNotes((prev) =>
-          prev.map((note) =>
-            note.id === selectedNote.id
-              ? { ...note, uploads: note.uploads.filter((upload) => upload.id !== fileId) }
-              : note,
-          ),
-        );
-      } catch (error) {
-        console.error("Failed to remove local attachment", error);
-      }
-      return;
-    }
-    // ── END LOCAL-FIRST PATH ──────────────────────────────────────────────────
-
+    // ── LOCAL-FIRST REMOVAL (all users, always) ───────────────────────────────
+    // Attachments are always stored in IndexedDB first, so removal always
+    // starts locally. String UUIDs are local blobs; numeric IDs were legacy
+    // backend IDs that may not have a local blob entry (safe to skip).
     try {
-      await removeFile(authToken, fileId as any);
+      if (typeof fileId === "string") {
+        await deleteLocalAttachmentById(fileId);
+      }
+      const localNote = await getLocalNote(String(selectedNote.id));
+      if (localNote) {
+        const updatedFiles = (localNote.files ?? []).filter((f: any) => f.id !== fileId);
+        await lnsUpdateNote({ ...localNote, files: updatedFiles });
+      }
       setNotes((prev) =>
         prev.map((note) =>
           note.id === selectedNote.id
@@ -1552,8 +1479,8 @@ export default function App() {
         ),
       );
     } catch (error) {
-      const detail = error instanceof Error ? error.message : t("app.uploadRemoveError");
-      window.alert(detail);
+      console.error("Failed to remove local attachment", error);
+      window.alert(t("app.uploadRemoveError"));
     }
   };
 
@@ -1709,43 +1636,23 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    // Clear cloud identity only. The local workspace stays open and fully
+    // functional — local notes, files, and AI are unaffected by logout.
     clearAuthToken();
     setAuthToken(null);
     setAuthenticated(false);
-    setSessionStatus("unauthenticated");
-    setSelectedId(null);
-    setNotes([]);
-    navigate("/login", { replace: true });
+    setSessionStatus("ready");
+    // Disconnect the sync adapter so the queue processor doesn't
+    // try to talk to the backend with no credentials.
+    syncService.unregisterAdapter?.();
   };
 
   const handleAssistantPrompt = async (prompt: string) => {
-    if (!selectedNote || !authToken) return;
+    // AI works on the local note content regardless of auth state.
+    // No token or sync is required — the note body is read directly from local state.
+    if (!selectedNote) return;
 
-    // ── Local-offline guard ────────────────────────────────────────────────
-    // Never send the offline sentinel token to the backend.
-    // Display a friendly message in the chat instead.
-    if (authToken === "local-offline-session-token") {
-      const offlineUserId = `user-${Date.now()}`;
-      const offlineAssistId = `assistant-offline-${Date.now()}`;
-      setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
-        ...prev,
-        [selectedNote.id]: [
-          ...(prev[selectedNote.id] ?? []),
-          { id: offlineUserId, role: "user" as const, content: prompt } satisfies ChatMessage,
-          {
-            id: offlineAssistId,
-            role: "assistant" as const,
-            content:
-              "AI assistant requires a signed-in cloud account. " +
-              "Your notes are saved locally and work fully offline — " +
-              "AI chat will be available once you sign in and enable cloud sync.",
-            status: "done" as const,
-          } satisfies ChatMessage,
-        ],
-      }));
-      return;
-    }
-    // ── End local-offline guard ───────────────────────────────────────────
+
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       role: "user",
@@ -2095,7 +2002,7 @@ export default function App() {
         </button>
 
         <div className="sidebar-health-footer">
-          <WorkspaceHealthPanel isLocalSession={authToken === "local-offline-session-token"} />
+          <WorkspaceHealthPanel isLocalSession={!isAuthenticated} />
         </div>
       </aside>
 
@@ -2206,7 +2113,7 @@ export default function App() {
   return (
     <div className={`theme-root ${darkMode ? "theme-dark" : ""}`}>
       <Routes>
-        <Route path="/" element={<Navigate to={isAuthenticated ? "/home" : "/login"} replace />} />
+        <Route path="/" element={<Navigate to="/home" replace />} />
         <Route
           path="/login"
           element={(
@@ -2220,7 +2127,7 @@ export default function App() {
                 onAppleAuth={handleAppleAuth}
                 onForgotPassword={handleForgotPassword}
                 onResetPassword={handleResetPassword}
-                onContinueOffline={() => void finalizeAuth("local-offline-session-token")}
+                onContinueOffline={() => navigate("/home", { replace: true })}
               />
             </PublicRoute>
           )}
@@ -2238,7 +2145,7 @@ export default function App() {
                 onAppleAuth={handleAppleAuth}
                 onForgotPassword={handleForgotPassword}
                 onResetPassword={handleResetPassword}
-                onContinueOffline={() => void finalizeAuth("local-offline-session-token")}
+                onContinueOffline={() => navigate("/home", { replace: true })}
               />
             </PublicRoute>
           )}
@@ -2352,7 +2259,7 @@ export default function App() {
             </ProtectedRoute>
           )}
         />
-        <Route path="*" element={<Navigate to={isAuthenticated ? "/home" : "/login"} replace />} />
+        <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
     </div>
   );

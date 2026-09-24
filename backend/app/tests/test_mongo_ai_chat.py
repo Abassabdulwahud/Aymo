@@ -134,13 +134,50 @@ class TestUnsyncedAINoteResolution(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(resolved.body, "New Local Body")
             self.assertEqual(resolved.mongo_note_id, "note-1")
 
-    async def test_content_hash_changes_when_body_edited(self):
-        from app.routes.ai import ResolvedAINote
-        note1 = ResolvedAINote(title="Test", body="Version 1: Rusty is a dog.")
-        note2 = ResolvedAINote(title="Test", body="Version 2: Rusty is a cat.")
+    async def test_anonymous_note_context_resolves_without_db_lookup(self):
+        from app.routes.ai import resolve_note_for_ai, NoteContextPayload
+        db = MagicMock()
+        db.notes.find_one = AsyncMock(return_value={"_id": "other-user-note", "user_id": "user-999"})
 
-        self.assertNotEqual(note1.content_hash, note2.content_hash)
+        ctx = NoteContextPayload(title="Anonymous Note", body="Local body content")
+        resolved = await resolve_note_for_ai(db, "other-user-note", None, ctx)
+
+        self.assertEqual(resolved.title, "Anonymous Note")
+        self.assertEqual(resolved.body, "Local body content")
+        self.assertIsNone(resolved.mongo_note_id)
+        # Verify db.notes.find_one was NOT called for anonymous user
+        db.notes.find_one.assert_not_called()
+
+    async def test_anonymous_note_without_context_raises_400(self):
+        from app.routes.ai import resolve_note_for_ai
+        from fastapi import HTTPException
+        db = MagicMock()
+
+        with self.assertRaises(HTTPException) as cm:
+            await resolve_note_for_ai(db, "any-note-id", None, None)
+        self.assertEqual(cm.exception.status_code, 400)
+
+
+class TestOptionalMongoUserDependency(unittest.IsolatedAsyncioTestCase):
+    async def test_get_optional_mongo_user_returns_none_when_no_auth_header(self):
+        from app.dependencies.mongo_auth import get_optional_mongo_user
+        request = MagicMock()
+        request.headers.get.return_value = ""
+
+        user = await get_optional_mongo_user(request)
+        self.assertIsNone(user)
+
+    async def test_get_optional_mongo_user_raises_401_on_invalid_token(self):
+        from app.dependencies.mongo_auth import get_optional_mongo_user
+        from fastapi import HTTPException
+        request = MagicMock()
+        request.headers.get.return_value = "Bearer invalid.jwt.token"
+
+        with self.assertRaises(HTTPException) as cm:
+            await get_optional_mongo_user(request)
+        self.assertEqual(cm.exception.status_code, 401)
 
 
 if __name__ == "__main__":
     unittest.main()
+

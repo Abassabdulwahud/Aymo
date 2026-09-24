@@ -98,7 +98,7 @@ export function saveAuthToken(token: string): void {
 
 export function loadAuthToken(): string | null {
   const token = safeStorageGet(TOKEN_STORAGE_KEY);
-  return token || "local-offline-session-token";
+  return token || null;
 }
 
 export function clearAuthToken(): void {

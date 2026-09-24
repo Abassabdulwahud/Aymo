@@ -408,7 +408,7 @@ export function AuthPage({
                   style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: "none", color: "var(--foreground)", fontSize: "14px", fontWeight: 500 }}
                   onClick={onContinueOffline}
                 >
-                  Continue Offline (Local Mode)
+                  Continue without an account
                 </button>
               </div>
             ) : null}
