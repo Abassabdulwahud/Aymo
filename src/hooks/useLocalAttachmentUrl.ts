@@ -82,7 +82,7 @@ export function useLocalAttachmentUrl(
       // If there's already a non-blob fallback URL (e.g. a CDN URL), use it
       // immediately while we check IndexedDB in parallel. This prevents a flash
       // of the loading state for cloud-synced files that happen to have a UUID.
-      if (fallbackUrl && !fallbackUrl.startsWith("blob:")) {
+      if (fallbackUrl) {
         if (!isCancelled) {
           setUrl(fallbackUrl);
           setLoading(false);

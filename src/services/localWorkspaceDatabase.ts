@@ -168,28 +168,56 @@ function runTransaction<T>(
       new Promise<T>((resolve, reject) => {
         const transaction = database.transaction(storeNames, mode);
         let result: T;
-        let operationSettled = false;
+        let operationHasResult = false;
+        let txCompleted = false;
+        let settled = false;
 
-        transaction.oncomplete = () => {
-          if (operationSettled) {
+        function tryResolve() {
+          if (!settled && txCompleted && operationHasResult) {
+            settled = true;
             resolve(result);
           }
+        }
+
+        transaction.oncomplete = () => {
+          txCompleted = true;
+          tryResolve();
         };
-        transaction.onabort = () => reject(transaction.error ?? new Error("Local database transaction was aborted."));
-        transaction.onerror = () => reject(transaction.error ?? new Error("Local database transaction failed."));
+        transaction.onabort = () => {
+          if (!settled) {
+            settled = true;
+            reject(
+              transaction.error ??
+                new Error("Local database transaction was aborted."),
+            );
+          }
+        };
+        transaction.onerror = () => {
+          if (!settled) {
+            settled = true;
+            reject(
+              transaction.error ??
+                new Error("Local database transaction failed."),
+            );
+          }
+        };
 
         operation(transaction)
           .then((value) => {
             result = value;
-            operationSettled = true;
+            operationHasResult = true;
+            tryResolve();
           })
           .catch((error) => {
-            try {
-              transaction.abort();
-            } catch {
-              // The transaction may already be closed.
+            if (!settled) {
+              settled = true;
+              try {
+                transaction.abort();
+              } catch {
+                // The transaction may already be closed.
+              }
+              reject(error);
             }
-            reject(error);
           });
       }),
   );
@@ -336,11 +364,17 @@ export async function listLocalNotes(workspaceId: string, includeTrashed = false
   });
 }
 
-export async function getLocalNote(id: string): Promise<LocalNote | null> {
+export async function getLocalNote(id: string | number): Promise<LocalNote | null> {
   return runTransaction("notes", "readonly", async (transaction) => {
-    const note = await requestToPromise<LocalNote | undefined>(
-      transaction.objectStore("notes").get(id),
+    const store = transaction.objectStore("notes");
+    let note = await requestToPromise<LocalNote | undefined>(
+      store.get(String(id)),
     );
+    if (!note && typeof id === "number") {
+      note = await requestToPromise<LocalNote | undefined>(store.get(id as any));
+    } else if (!note && typeof id === "string" && !isNaN(Number(id))) {
+      note = await requestToPromise<LocalNote | undefined>(store.get(Number(id) as any));
+    }
     return note ?? null;
   });
 }

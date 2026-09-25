@@ -50,9 +50,9 @@ import { Annotation, BoundingRect } from "../types";
 
 function detectViewerKind(upload: UploadedItem): "image" | "pdf" | "document" | "video" | "audio" | "link" {
   const name = upload.name.toLowerCase();
-  if (/\.(png|jpe?g|gif|webp|bmp|svg)\b/.test(name)) return "image";
-  if (upload.kind === "video") return "video";
-  if (upload.kind === "audio") return "audio";
+  if (upload.kind === "image" || /\.(png|jpe?g|gif|webp|bmp|svg)\b/.test(name)) return "image";
+  if (upload.kind === "video" || /\.(mp4|mov|avi|mkv|webm|m4v)\b/.test(name)) return "video";
+  if (upload.kind === "audio" || /\.(mp3|wav|m4a|aac|ogg|flac)\b/.test(name)) return "audio";
   if (upload.kind === "link") return "link";
   if (upload.kind === "pdf" || /\.pdf\b/.test(name)) return "pdf";
   return "document";
@@ -170,7 +170,10 @@ export function NoteSidePanel({
           id="tabbed-file-upload"
           type="file"
           multiple
-          onChange={(event) => onFileUpload(event.target.files)}
+          onChange={(event) => {
+            onFileUpload(event.target.files);
+            event.target.value = "";
+          }}
           accept=".pdf,.doc,.docx,.txt,.ppt,.pptx,.xls,.xlsx,.mp4,.mov,.mkv,.webm,.mp3,.wav,.m4a,.aac,.ogg,.png,.jpg,.jpeg,.gif,.webp"
         />
         <Plus size={22} strokeWidth={1.8} />

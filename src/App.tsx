@@ -59,6 +59,7 @@ import {
   putLocalAttachmentBlob,
   getLocalAttachmentBlob,
   deleteLocalAttachmentBlob,
+  generateUuid,
 } from "./services/localWorkspaceDatabase";
 import {
   createNote as lnsCreateNote,
@@ -873,9 +874,9 @@ export default function App() {
   const selectedNote = useMemo(
     () => {
       if (routeNoteId) {
-        return notes.find((note) => note.id === routeNoteId) ?? null;
+        return notes.find((note) => String(note.id) === String(routeNoteId)) ?? null;
       }
-      return (selectedId ? notes.find((note) => note.id === selectedId) : undefined) ?? notes[0] ?? null;
+      return (selectedId ? notes.find((note) => String(note.id) === String(selectedId)) : undefined) ?? notes[0] ?? null;
     },
     [notes, routeNoteId, selectedId],
   );
@@ -1366,7 +1367,7 @@ export default function App() {
   };
 
   const handleUpload = async (files: FileList | null) => {
-    if (!authToken || !selectedNote || !files || files.length === 0) return;
+    if (!selectedNote || !files || files.length === 0) return;
 
     // Step 1: Immediately insert optimistic placeholder cards so the user sees
     // the files right away — before the upload network request even finishes.
@@ -1405,12 +1406,17 @@ export default function App() {
           sizeLabel: meta.sizeLabel,
           addedAt: noteLabels.justNow,
           extractionStatus: "completed",
+          source: URL.createObjectURL(file),
         });
       }
 
       // Persist file metadata on the local note record (serialisable fields only — no Blob or Object URL).
       try {
-        const localNote = await getLocalNote(String(selectedNote.id));
+        let localNote = await getLocalNote(selectedNote.id);
+        if (!localNote && workspaceId) {
+          const allLocal = await listLocalNotes(workspaceId, false);
+          localNote = allLocal.find((n) => String(n.id) === String(selectedNote.id)) ?? null;
+        }
         if (localNote) {
           const metaEntries = localItems.map((item) => ({
             id: item.id,
@@ -1448,11 +1454,57 @@ export default function App() {
   };
 
   const handleAddLink = async () => {
-    if (!authToken || !selectedNote) return;
+    if (!selectedNote) return;
     const input = window.prompt(t("app.addLinkPrompt"), "https://");
     if (!input) return;
-    const created = await addLink(authToken, selectedNote.id as any, input, input.replace(/^https?:\/\//, ""));
-    updateCurrentNote({ uploads: [mapFileToUpload(created, noteLabels.justNow), ...selectedNote.uploads] });
+
+    let createdUpload: UploadedItem;
+    if (authToken && navigator.onLine) {
+      try {
+        const created = await addLink(authToken, selectedNote.id as any, input, input.replace(/^https?:\/\//, ""));
+        createdUpload = mapFileToUpload(created, noteLabels.justNow);
+      } catch {
+        createdUpload = {
+          id: generateUuid(),
+          name: input.replace(/^https?:\/\//, ""),
+          kind: "link",
+          sizeLabel: "Link",
+          addedAt: noteLabels.justNow,
+          extractionStatus: "completed",
+          source: input,
+        };
+      }
+    } else {
+      createdUpload = {
+        id: generateUuid(),
+        name: input.replace(/^https?:\/\//, ""),
+        kind: "link",
+        sizeLabel: "Link",
+        addedAt: noteLabels.justNow,
+        extractionStatus: "completed",
+        source: input,
+      };
+    }
+
+    try {
+      const localNote = await getLocalNote(String(selectedNote.id));
+      if (localNote) {
+        const metaEntries = [{
+          id: createdUpload.id,
+          name: createdUpload.name,
+          kind: createdUpload.kind,
+          sizeLabel: createdUpload.sizeLabel,
+          addedAt: createdUpload.addedAt,
+          extractionStatus: createdUpload.extractionStatus,
+          source: createdUpload.source,
+        }];
+        await lnsUpdateNote({ ...localNote, files: [...(localNote.files ?? []), ...metaEntries] });
+      }
+    } catch (metaErr) {
+      console.error("[AYMO] Failed to save link to local note:", metaErr);
+    }
+
+    updateCurrentNote({ uploads: [createdUpload, ...selectedNote.uploads] });
   };
 
   const handleRemoveUpload = async (fileId: string | number) => {
