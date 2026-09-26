@@ -6,7 +6,7 @@
 // PRECACHE_URLS is injected automatically by the Vite build plugin at build time.
 // Do NOT edit the precache list manually — it is replaced on every build.
 
-const CACHE_NAME = "aymo-shell-v16";
+const CACHE_NAME = "aymo-shell-v17";
 
 // Files to pre-cache on install.
 // The placeholder below is replaced by the Vite plugin with actual hashed filenames.

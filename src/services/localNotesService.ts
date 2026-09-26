@@ -21,6 +21,8 @@
 
 import {
   putLocalNote,
+  getLocalNote,
+  listLocalNotes,
   deleteLocalNotePermanently,
   generateUuid,
   type LocalNote,
@@ -91,6 +93,84 @@ export async function updateNote(
   void enqueueQuietly(note.workspaceId, operation, note.id, noteToPayload(updated));
   return updated;
 }
+
+/**
+ * Atomically appends file metadata entries to a note's `files` array in IndexedDB.
+ * If the note doesn't exist in IndexedDB yet, creates it.
+ */
+export async function appendNoteFiles(
+  workspaceId: string,
+  noteId: string,
+  newFiles: any[],
+  fallbackTitle = "",
+  fallbackBody = "",
+): Promise<LocalNote> {
+  let localNote = await getLocalNote(noteId);
+  if (!localNote && workspaceId) {
+    const allLocal = await listLocalNotes(workspaceId, false);
+    localNote = allLocal.find((n) => String(n.id) === String(noteId)) ?? null;
+  }
+
+  const now = new Date().toISOString();
+  if (!localNote) {
+    localNote = {
+      id: noteId,
+      workspaceId,
+      title: fallbackTitle,
+      body: fallbackBody,
+      isPinned: false,
+      isFavorited: false,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      tags: [],
+      files: [],
+    };
+  }
+
+  const existingFiles = localNote.files ?? [];
+  const existingIds = new Set(existingFiles.map((f: any) => String(f.id)));
+  const filteredNew = newFiles.filter((f: any) => !existingIds.has(String(f.id)));
+  const updatedFiles = [...existingFiles, ...filteredNew];
+
+  const updatedNote: LocalNote = {
+    ...localNote,
+    files: updatedFiles,
+    updatedAt: now,
+  };
+
+  await putLocalNote(updatedNote);
+  void enqueueQuietly(workspaceId, "update", updatedNote.id, noteToPayload(updatedNote));
+  return updatedNote;
+}
+
+/**
+ * Atomically removes a file metadata entry from a note's `files` array in IndexedDB.
+ */
+export async function removeNoteFile(
+  workspaceId: string,
+  noteId: string,
+  fileId: string | number,
+): Promise<LocalNote | null> {
+  let localNote = await getLocalNote(noteId);
+  if (!localNote && workspaceId) {
+    const allLocal = await listLocalNotes(workspaceId, false);
+    localNote = allLocal.find((n) => String(n.id) === String(noteId)) ?? null;
+  }
+  if (!localNote) return null;
+
+  const updatedFiles = (localNote.files ?? []).filter((f: any) => String(f.id) !== String(fileId));
+  const updatedNote: LocalNote = {
+    ...localNote,
+    files: updatedFiles,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await putLocalNote(updatedNote);
+  void enqueueQuietly(workspaceId, "update", updatedNote.id, noteToPayload(updatedNote));
+  return updatedNote;
+}
+
 
 // ─── Soft Delete (Trash) ──────────────────────────────────────────────────────
 

@@ -64,6 +64,8 @@ import {
 import {
   createNote as lnsCreateNote,
   updateNote as lnsUpdateNote,
+  appendNoteFiles as lnsAppendNoteFiles,
+  removeNoteFile as lnsRemoveNoteFile,
   trashNote as lnsTrashNote,
   duplicateNote as lnsDuplicateNote,
   toggleNotePin as lnsToggleNotePin,
@@ -1162,20 +1164,29 @@ export default function App() {
     setNotes((prev) =>
       prev.map((note) => {
         if (String(note.id) !== String(nextNote.id)) return note;
-        // ── Preserve in-memory blob source URLs ────────────────────────────
+        // ── Preserve in-memory blob source URLs and local uploads ────────────
         // When note metadata (title, pin, body) is saved, mapLocalNoteToHomeNote
         // re-derives uploads from LocalNote.files which has no `source` field.
         // We merge the current in-memory `source` (Object URL / CDN URL) back
         // in so PDF/image/video/audio viewers never lose their render source.
-        const sourceById = new Map(
-          (note.uploads || [])
-            .filter((u) => u.source)
-            .map((u) => [String(u.id), u.source as string]),
-        );
-        const mergedUploads = (nextNote.uploads || []).map((u) =>
-          u.source ? u : { ...u, source: sourceById.get(String(u.id)) },
-        );
-        return { ...nextNote, uploads: mergedUploads };
+        const currentUploads = note.uploads || [];
+        const nextUploads = nextNote.uploads;
+
+        let finalUploads: UploadedItem[];
+        if (!nextUploads) {
+          finalUploads = currentUploads;
+        } else {
+          const sourceById = new Map(
+            currentUploads.filter((u) => u.source).map((u) => [String(u.id), u.source as string]),
+          );
+          const nextUploadsWithSources = nextUploads.map((u) =>
+            u.source ? u : { ...u, source: sourceById.get(String(u.id)) },
+          );
+          const nextIds = new Set(nextUploads.map((u) => String(u.id)));
+          const currentOnly = currentUploads.filter((u) => !nextIds.has(String(u.id)));
+          finalUploads = [...currentOnly, ...nextUploadsWithSources];
+        }
+        return { ...nextNote, uploads: finalUploads };
       })
     );
   };
@@ -1402,7 +1413,7 @@ export default function App() {
         title: selectedNote.title,
         body: selectedNote.body,
         isPinned: selectedNote.pinned,
-        // Explicitly do NOT touch localNote.files — it is authoritative here.
+        files: localNote.files ?? [],
       });
       lastSyncedRef.current[selectedNote.id] = {
         title: selectedNote.title,
@@ -1447,9 +1458,9 @@ export default function App() {
     // Cloud sync happens separately during explicit Sync operations.
     try {
       const localItems: UploadedItem[] = [];
-      const workspaceId = await getActiveWorkspaceId() || "";
+      const workspaceId = (await getActiveWorkspaceId()) || "";
       for (const file of Array.from(files)) {
-        const meta = await saveLocalAttachment(file, String(selectedNote.id), workspaceId);
+        const meta = await saveLocalAttachment(file, String(noteIdSnapshot), workspaceId);
         localItems.push({
           id: meta.id,
           name: meta.fileName,
@@ -1461,24 +1472,23 @@ export default function App() {
         });
       }
 
-      // Persist file metadata on the local note record (serialisable fields only — no Blob or Object URL).
+      // Persist file metadata on the local note record atomically.
       try {
-        let localNote = await getLocalNote(String(selectedNote.id));
-        if (!localNote && workspaceId) {
-          const allLocal = await listLocalNotes(workspaceId, false);
-          localNote = allLocal.find((n) => String(n.id) === String(selectedNote.id)) ?? null;
-        }
-        if (localNote) {
-          const metaEntries = localItems.map((item) => ({
-            id: item.id,
-            name: item.name,
-            kind: item.kind,
-            sizeLabel: item.sizeLabel,
-            addedAt: item.addedAt,
-            extractionStatus: item.extractionStatus,
-          }));
-          await lnsUpdateNote({ ...localNote, files: [...(localNote.files ?? []), ...metaEntries] });
-        }
+        const metaEntries = localItems.map((item) => ({
+          id: item.id,
+          name: item.name,
+          kind: item.kind,
+          sizeLabel: item.sizeLabel,
+          addedAt: item.addedAt,
+          extractionStatus: item.extractionStatus,
+        }));
+        await lnsAppendNoteFiles(
+          workspaceId,
+          String(noteIdSnapshot),
+          metaEntries,
+          selectedNote.title,
+          selectedNote.body
+        );
       } catch (metaErr) {
         console.error("[AYMO] Failed to save file metadata to local note:", metaErr);
       }
@@ -1487,7 +1497,8 @@ export default function App() {
       setNotes((prev) =>
         prev.map((note) => {
           if (String(note.id) !== String(noteIdSnapshot)) return note;
-          const nonTemp = (note.uploads || []).filter((u) => !(typeof u.id === "number" && u.id < 0));
+          const currentUploads = note.uploads || [];
+          const nonTemp = currentUploads.filter((u) => !(typeof u.id === "number" && u.id < 0));
           const localItemIds = new Set(localItems.map((item) => String(item.id)));
           const filteredNonTemp = nonTemp.filter((u) => !localItemIds.has(String(u.id)));
           return { ...note, uploads: [...localItems, ...filteredNonTemp] };
@@ -1543,42 +1554,49 @@ export default function App() {
     }
 
     try {
-      const localNote = await getLocalNote(String(selectedNote.id));
-      if (localNote) {
-        const metaEntries = [{
-          id: createdUpload.id,
-          name: createdUpload.name,
-          kind: createdUpload.kind,
-          sizeLabel: createdUpload.sizeLabel,
-          addedAt: createdUpload.addedAt,
-          extractionStatus: createdUpload.extractionStatus,
-          source: createdUpload.source,
-        }];
-        await lnsUpdateNote({ ...localNote, files: [...(localNote.files ?? []), ...metaEntries] });
-      }
+      const workspaceId = (await getActiveWorkspaceId()) || "";
+      const metaEntries = [{
+        id: createdUpload.id,
+        name: createdUpload.name,
+        kind: createdUpload.kind,
+        sizeLabel: createdUpload.sizeLabel,
+        addedAt: createdUpload.addedAt,
+        extractionStatus: createdUpload.extractionStatus,
+        source: createdUpload.source,
+      }];
+      await lnsAppendNoteFiles(
+        workspaceId,
+        String(selectedNote.id),
+        metaEntries,
+        selectedNote.title,
+        selectedNote.body
+      );
     } catch (metaErr) {
       console.error("[AYMO] Failed to save link to local note:", metaErr);
     }
 
-    updateCurrentNote({ uploads: [createdUpload, ...selectedNote.uploads] });
+    setNotes((prev) =>
+      prev.map((note) => {
+        if (String(note.id) !== String(selectedNote.id)) return note;
+        const currentUploads = note.uploads || [];
+        const existingIds = new Set(currentUploads.map((u) => String(u.id)));
+        if (existingIds.has(String(createdUpload.id))) return note;
+        return { ...note, uploads: [createdUpload, ...currentUploads] };
+      })
+    );
   };
 
   const handleRemoveUpload = async (fileId: string | number) => {
     if (!selectedNote) return;
 
     // ── LOCAL-FIRST REMOVAL (all users, always) ───────────────────────────────
-    // Attachments are always stored in IndexedDB first, so removal always
-    // starts locally. String UUIDs are local blobs; numeric IDs were legacy
-    // backend IDs that may not have a local blob entry (safe to skip).
     try {
       if (typeof fileId === "string") {
         await deleteLocalAttachmentById(fileId);
       }
-      const localNote = await getLocalNote(String(selectedNote.id));
-      if (localNote) {
-        const updatedFiles = (localNote.files ?? []).filter((f: any) => String(f.id) !== String(fileId));
-        await lnsUpdateNote({ ...localNote, files: updatedFiles });
-      }
+      const workspaceId = (await getActiveWorkspaceId()) || "";
+      await lnsRemoveNoteFile(workspaceId, String(selectedNote.id), fileId);
+
       setNotes((prev) =>
         prev.map((note) =>
           String(note.id) === String(selectedNote.id)
