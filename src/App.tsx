@@ -1375,6 +1375,10 @@ export default function App() {
   const handleUpload = async (files: FileList | null) => {
     if (!selectedNote || !files || files.length === 0) return;
 
+    // Automatically expand and switch the right-side panel to the Uploads tab
+    setActiveRightTab("uploads");
+    setIsRightPanelCollapsed(false);
+
     // Step 1: Immediately insert optimistic placeholder cards so the user sees
     // the files right away — before the upload network request even finishes.
     const now = Date.now();
@@ -1465,6 +1469,9 @@ export default function App() {
     if (!selectedNote) return;
     const input = window.prompt(t("app.addLinkPrompt"), "https://");
     if (!input) return;
+
+    setActiveRightTab("uploads");
+    setIsRightPanelCollapsed(false);
 
     let createdUpload: UploadedItem;
     if (authToken && navigator.onLine) {
