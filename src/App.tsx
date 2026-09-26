@@ -395,8 +395,33 @@ export default function App() {
       const workspaceId = await getActiveWorkspaceId();
       if (workspaceId) {
         const localNotes = await listLocalNotes(workspaceId, false);
-        const mappedNotes = localNotes.map((note) => mapLocalNoteToHomeNote(note, noteLabels));
-        setNotes(mappedNotes);
+        const labels = noteLabelsRef.current;
+        // Merge: preserve in-memory blob URLs / sources for uploads that are
+        // already loaded, instead of doing a destructive full replace.
+        setNotes((prev) => {
+          const prevById = new Map(prev.map((n) => [String(n.id), n]));
+          return localNotes.map((ln) => {
+            const mapped = mapLocalNoteToHomeNote(ln, labels);
+            const existing = prevById.get(String(ln.id));
+            if (!existing) return mapped;
+            // Re-build blob URL sources from the current in-memory state
+            const sourceById = new Map(
+              (existing.uploads || [])
+                .filter((u) => u.source)
+                .map((u) => [String(u.id), u.source as string]),
+            );
+            const mergedUploads = (mapped.uploads || []).map((u) =>
+              u.source ? u : { ...u, source: sourceById.get(String(u.id)) },
+            );
+            // Preserve any local-only uploads (string UUIDs) that are in memory
+            // but not yet flushed to the note.files in IndexedDB.
+            const inDbIds = new Set(mergedUploads.map((u) => String(u.id)));
+            const localOnlyUploads = (existing.uploads || []).filter(
+              (u) => typeof u.id === "string" && !inDbIds.has(String(u.id)),
+            );
+            return { ...mapped, uploads: [...localOnlyUploads, ...mergedUploads] };
+          });
+        });
       }
       setSyncBannerMessage(result.message);
     } catch (err: unknown) {
@@ -455,6 +480,11 @@ export default function App() {
     }),
     [t],
   );
+  // Keep a stable ref to noteLabels so callbacks that run in effects can read
+  // the latest value without listing noteLabels as a dep (which would cause
+  // hydrateWorkspace to re-run on every language change, wiping uploads).
+  const noteLabelsRef = useRef(noteLabels);
+  useEffect(() => { noteLabelsRef.current = noteLabels; }, [noteLabels]);
   const noteRouteMatch = matchPath("/notes/:noteId", location.pathname);
   const routeNoteId = noteRouteMatch ? noteRouteMatch.params.noteId || null : null;
 
@@ -641,7 +671,7 @@ export default function App() {
         }
         const tagItems = Array.from(localTagsSet);
 
-        const mappedNotes = localNotes.map((note) => mapLocalNoteToHomeNote(note, noteLabels));
+        const mappedNotes = localNotes.map((note) => mapLocalNoteToHomeNote(note, noteLabelsRef.current));
         lastSyncedRef.current = Object.fromEntries(
           mappedNotes.map((note) => [note.id, { title: note.title, body: note.body }]),
         );
@@ -717,7 +747,11 @@ export default function App() {
       mounted = false;
       syncService.destroy();
     };
-  }, [authToken, isAuthenticated, noteLabels]);
+  // NOTE: noteLabels is intentionally excluded from this dep array.
+  // Including it would cause hydrateWorkspace to re-run on every language
+  // change, wiping in-memory uploads. Labels are read via noteLabelsRef instead.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authToken, isAuthenticated]);
 
   useEffect(() => {
     return () => {
@@ -1355,13 +1389,20 @@ export default function App() {
   const persistCurrentNote = async () => {
     if (!selectedNote) return;
     try {
+      // ── Race-safe autosave ─────────────────────────────────────────────────
+      // We read `localNote` immediately before writing so we never clobber
+      // file metadata that handleUpload may have written since our last read.
+      // The title/body we save come from the in-memory `selectedNote`; the
+      // rest of the record (including `files`) comes from the freshest
+      // IndexedDB snapshot available at write time.
       const localNote = await getLocalNote(String(selectedNote.id));
       if (!localNote) return;
       await lnsUpdateNote({
-        ...localNote,
+        ...localNote,       // fresh read — includes any files just saved by handleUpload
         title: selectedNote.title,
         body: selectedNote.body,
         isPinned: selectedNote.pinned,
+        // Explicitly do NOT touch localNote.files — it is authoritative here.
       });
       lastSyncedRef.current[selectedNote.id] = {
         title: selectedNote.title,
