@@ -1127,18 +1127,18 @@ export default function App() {
   const replaceNote = (nextNote: HomeNote) => {
     setNotes((prev) =>
       prev.map((note) => {
-        if (note.id !== nextNote.id) return note;
+        if (String(note.id) !== String(nextNote.id)) return note;
         // ── Preserve in-memory blob source URLs ────────────────────────────
         // When note metadata (title, pin, body) is saved, mapLocalNoteToHomeNote
         // re-derives uploads from LocalNote.files which has no `source` field.
         // We merge the current in-memory `source` (Object URL / CDN URL) back
         // in so PDF/image/video/audio viewers never lose their render source.
         const sourceById = new Map(
-          note.uploads
+          (note.uploads || [])
             .filter((u) => u.source)
             .map((u) => [String(u.id), u.source as string]),
         );
-        const mergedUploads = nextNote.uploads.map((u) =>
+        const mergedUploads = (nextNote.uploads || []).map((u) =>
           u.source ? u : { ...u, source: sourceById.get(String(u.id)) },
         );
         return { ...nextNote, uploads: mergedUploads };
@@ -1164,31 +1164,37 @@ export default function App() {
 
       setNotes((prev) =>
         prev.map((note) => {
-          if (note.id !== selectedNote.id) return note;
+          if (String(note.id) !== String(selectedNote.id)) return note;
 
           // 1. Always keep optimistic temp entries (negative IDs) so they
           //    remain visible while the network round-trip is still in flight.
-          const tempEntries = note.uploads.filter((u) => typeof u.id === "number" && u.id < 0);
+          const tempEntries = (note.uploads || []).filter((u) => typeof u.id === "number" && u.id < 0);
 
           // 2. From the polled backend list, skip any ID that is currently
           //    tracked as a pending upload that we haven't confirmed yet.
-          //    (pendingUploadIdsRef is cleared once handleUpload swaps in
-          //    the real backend record.)
           const freshMapped = mapped.filter(
             (u) => !pendingUploadIdsRef.current.has(u.id as any)
           );
 
-          // 3. For any real (positive-ID) entries already in local state that
-          //    are NOT in the polled list yet — keep them too. This handles the
-          //    narrow window where the upload just completed but the next poll
-          //    fetch started before the backend committed the row.
-          const localRealNotInPoll = note.uploads.filter(
-            (u) => typeof u.id === "number" && u.id > 0 && !mapped.some((m) => m.id === u.id)
+          // 3. Keep all local/offline attachments (string IDs) AND any positive numeric IDs
+          //    already in local state that are NOT in the polled backend list yet.
+          const nonPolledEntries = (note.uploads || []).filter((u) => {
+            if (typeof u.id === "number" && u.id < 0) return false;
+            if (typeof u.id === "string") return true;
+            return !mapped.some((m) => String(m.id) === String(u.id));
+          });
+
+          // Preserve any in-memory sources (e.g. blob URLs or CDN URLs) from existing uploads
+          const sourceMap = new Map(
+            (note.uploads || []).filter((u) => u.source).map((u) => [String(u.id), u.source as string])
+          );
+          const freshMappedWithSources = freshMapped.map((u) =>
+            u.source ? u : { ...u, source: sourceMap.get(String(u.id)) }
           );
 
           return {
             ...note,
-            uploads: [...tempEntries, ...localRealNotInPoll, ...freshMapped],
+            uploads: [...tempEntries, ...nonPolledEntries, ...freshMappedWithSources],
           };
         })
       );
@@ -1384,8 +1390,8 @@ export default function App() {
     const noteIdSnapshot = selectedNote.id;
     setNotes((prev) =>
       prev.map((note) =>
-        note.id === noteIdSnapshot
-          ? { ...note, uploads: [...tempUploads, ...note.uploads] }
+        String(note.id) === String(noteIdSnapshot)
+          ? { ...note, uploads: [...tempUploads, ...(note.uploads || [])] }
           : note
       )
     );
@@ -1412,7 +1418,7 @@ export default function App() {
 
       // Persist file metadata on the local note record (serialisable fields only — no Blob or Object URL).
       try {
-        let localNote = await getLocalNote(selectedNote.id);
+        let localNote = await getLocalNote(String(selectedNote.id));
         if (!localNote && workspaceId) {
           const allLocal = await listLocalNotes(workspaceId, false);
           localNote = allLocal.find((n) => String(n.id) === String(selectedNote.id)) ?? null;
@@ -1435,9 +1441,11 @@ export default function App() {
       // Replace temp placeholder cards with the real local entries in React state.
       setNotes((prev) =>
         prev.map((note) => {
-          if (note.id !== noteIdSnapshot) return note;
-          const nonTemp = note.uploads.filter((u) => !(typeof u.id === "number" && u.id < 0));
-          return { ...note, uploads: [...localItems, ...nonTemp] };
+          if (String(note.id) !== String(noteIdSnapshot)) return note;
+          const nonTemp = (note.uploads || []).filter((u) => !(typeof u.id === "number" && u.id < 0));
+          const localItemIds = new Set(localItems.map((item) => String(item.id)));
+          const filteredNonTemp = nonTemp.filter((u) => !localItemIds.has(String(u.id)));
+          return { ...note, uploads: [...localItems, ...filteredNonTemp] };
         })
       );
     } catch (err) {
@@ -1445,8 +1453,8 @@ export default function App() {
       console.error("[AYMO] Local upload failed entirely:", err);
       setNotes((prev) =>
         prev.map((note) => {
-          if (note.id !== noteIdSnapshot) return note;
-          return { ...note, uploads: note.uploads.filter((u) => !(typeof u.id === "number" && u.id < 0)) };
+          if (String(note.id) !== String(noteIdSnapshot)) return note;
+          return { ...note, uploads: (note.uploads || []).filter((u) => !(typeof u.id === "number" && u.id < 0)) };
         })
       );
       window.alert("Could not save the attachment locally. Please reload the page and try again.");
@@ -1520,13 +1528,13 @@ export default function App() {
       }
       const localNote = await getLocalNote(String(selectedNote.id));
       if (localNote) {
-        const updatedFiles = (localNote.files ?? []).filter((f: any) => f.id !== fileId);
+        const updatedFiles = (localNote.files ?? []).filter((f: any) => String(f.id) !== String(fileId));
         await lnsUpdateNote({ ...localNote, files: updatedFiles });
       }
       setNotes((prev) =>
         prev.map((note) =>
-          note.id === selectedNote.id
-            ? { ...note, uploads: note.uploads.filter((upload) => upload.id !== fileId) }
+          String(note.id) === String(selectedNote.id)
+            ? { ...note, uploads: (note.uploads || []).filter((upload) => String(upload.id) !== String(fileId)) }
             : note,
         ),
       );
