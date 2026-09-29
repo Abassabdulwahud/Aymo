@@ -56,26 +56,21 @@ import {
   getLocalNote,
   getActiveWorkspaceId,
   createLocalWorkspace,
-  putLocalAttachmentBlob,
-  getLocalAttachmentBlob,
-  deleteLocalAttachmentBlob,
   generateUuid,
 } from "./services/localWorkspaceDatabase";
 import {
   createNote as lnsCreateNote,
   updateNote as lnsUpdateNote,
-  appendNoteFiles as lnsAppendNoteFiles,
-  removeNoteFile as lnsRemoveNoteFile,
   trashNote as lnsTrashNote,
   duplicateNote as lnsDuplicateNote,
   toggleNotePin as lnsToggleNotePin,
   permanentlyDeleteNote as lnsPermanentlyDeleteNote,
 } from "./services/localNotesService";
 import {
-  saveLocalAttachment,
-  deleteLocalAttachmentById,
-  detectAttachmentKind,
-} from "./services/localAttachmentService";
+  AttachmentService,
+  subscribeAttachmentChanges,
+  mapAttachmentRecordToUploadedItem,
+} from "./services/attachmentService";
 import { WorkspaceHealthPanel } from "./components/WorkspaceHealthPanel";
 import { syncService } from "./services/syncService";
 import { MongoDBAdapter } from "./services/mongoDbAdapter";
@@ -253,7 +248,7 @@ function mapLocalNoteToHomeNote(localNote: LocalNote, labels: { untitled: string
     pinned: localNote.isPinned,
     updatedAt: formatDisplayDate(localNote.updatedAt),
     updatedAtIso: localNote.updatedAt,
-    uploads: localNote.files || [],
+    uploads: [],
   };
 }
 
@@ -678,30 +673,23 @@ export default function App() {
           mappedNotes.map((note) => [note.id, { title: note.title, body: note.body }]),
         );
 
-        // ── Rehydrate local attachment blobs with fresh Object URLs ────────────
-        // Object URLs are tab-scoped and revoked on browser restart. After a
-        // reload we need to re-read each local blob from IndexedDB and create a
-        // new Object URL so the PDF viewer, image tag, and media players can
-        // render local files without any network request.
+        // ── Rehydrate local attachment blobs via AttachmentService ──────────
+        // Uploads are now stored in IndexedDB v4 (attachments + attachmentBlobs).
+        // After a page reload we re-load them via AttachmentService so each note
+        // has its current attachments without any legacy note.files dependency.
         const notesWithUrls = await Promise.all(
           mappedNotes.map(async (note) => {
-            if (!note.uploads || note.uploads.length === 0) return note;
-            const rehydratedUploads = await Promise.all(
-              note.uploads.map(async (upload) => {
-                // Only rehydrate attachments whose IDs are local UUIDs (strings).
-                if (typeof upload.id !== "string") return upload;
-                // Skip entries that already have a usable URL (e.g. remote CDN URLs).
-                if (upload.source && !upload.source.startsWith("blob:")) return upload;
-                try {
-                  const blob = await getLocalAttachmentBlob(upload.id);
-                  if (!blob) return upload;
-                  return { ...upload, source: URL.createObjectURL(blob) };
-                } catch {
-                  return upload;
-                }
-              }),
-            );
-            return { ...note, uploads: rehydratedUploads };
+            try {
+              const records = await AttachmentService.listAttachments(
+                String(note.id),
+                workspaceId,
+              );
+              if (records.length === 0) return note;
+              const uploads = records.map(mapAttachmentRecordToUploadedItem);
+              return { ...note, uploads };
+            } catch {
+              return note;
+            }
           }),
         );
         // ── End rehydration ────────────────────────────────────────────────────
@@ -760,6 +748,9 @@ export default function App() {
       speechRecognitionRef.current?.stop();
     };
   }, []);
+
+  // Placeholder — the actual attachment-rehydration effect is placed after
+  // selectedNote is declared (useMemo) further below.
 
   useEffect(() => {
     if (openNoteMenuId === null) return;
@@ -922,6 +913,48 @@ export default function App() {
       setSelectedId(routeNoteId);
     }
   }, [routeNoteId, selectedId]);
+
+  // ── Rehydrate attachments from IndexedDB v4 for active note ───────────────
+  // Placed here (after selectedNote useMemo) to avoid a forward-reference error.
+  useEffect(() => {
+    if (!selectedNote) return;
+    let isCancelled = false;
+
+    const loadAttachments = async () => {
+      const wsId = (await getActiveWorkspaceId()) || "";
+      if (!wsId || !selectedNote) return;
+
+      try {
+        const records = await AttachmentService.listAttachments(String(selectedNote.id), wsId);
+        if (isCancelled) return;
+        const uploadedItems = records.map(mapAttachmentRecordToUploadedItem);
+
+        setNotes((prev) =>
+          prev.map((n) =>
+            String(n.id) === String(selectedNote.id)
+              ? { ...n, uploads: uploadedItems }
+              : n,
+          ),
+        );
+      } catch (err) {
+        console.error("Failed to load attachments for note:", err);
+      }
+    };
+
+    void loadAttachments();
+
+    const unsubscribe = subscribeAttachmentChanges((event) => {
+      if (!event.noteId || String(event.noteId) === String(selectedNote.id)) {
+        void loadAttachments();
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+      unsubscribe();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNote?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1400,21 +1433,16 @@ export default function App() {
   const persistCurrentNote = async () => {
     if (!selectedNote) return;
     try {
-      // ── Race-safe autosave ─────────────────────────────────────────────────
-      // We read `localNote` immediately before writing so we never clobber
-      // file metadata that handleUpload may have written since our last read.
-      // The title/body we save come from the in-memory `selectedNote`; the
-      // rest of the record (including `files`) comes from the freshest
-      // IndexedDB snapshot available at write time.
       const localNote = await getLocalNote(String(selectedNote.id));
       if (!localNote) return;
-      await lnsUpdateNote({
-        ...localNote,       // fresh read — includes any files just saved by handleUpload
+      const updated = {
+        ...localNote,
         title: selectedNote.title,
         body: selectedNote.body,
         isPinned: selectedNote.pinned,
-        files: localNote.files ?? [],
-      });
+      };
+      delete (updated as any).files;
+      await lnsUpdateNote(updated);
       lastSyncedRef.current[selectedNote.id] = {
         title: selectedNote.title,
         body: selectedNote.body,
@@ -1427,93 +1455,17 @@ export default function App() {
   const handleUpload = async (files: FileList | null) => {
     if (!selectedNote || !files || files.length === 0) return;
 
-    // Automatically expand and switch the right-side panel to the Uploads tab
     setActiveRightTab("uploads");
     setIsRightPanelCollapsed(false);
 
-    // Step 1: Immediately insert optimistic placeholder cards so the user sees
-    // the files right away — before the upload network request even finishes.
-    const now = Date.now();
-    const tempIds = Array.from(files).map((_, i) => -(now + i));
-    const tempUploads: UploadedItem[] = Array.from(files).map((file, i) => ({
-      id: tempIds[i],  // negative IDs mark temp/optimistic entries
-      name: file.name,
-      kind: detectUploadKind(file.name),
-      sizeLabel: bytesToLabel(file.size),
-      addedAt: noteLabels.justNow,
-      extractionStatus: "uploading",
-    }));
-    const noteIdSnapshot = selectedNote.id;
-    setNotes((prev) =>
-      prev.map((note) =>
-        String(note.id) === String(noteIdSnapshot)
-          ? { ...note, uploads: [...tempUploads, ...(note.uploads || [])] }
-          : note
-      )
-    );
-
-    // ── LOCAL-FIRST UPLOAD (all users, always) ────────────────────────────────
-    // Every file is stored as a raw Blob in IndexedDB first.
-    // This works whether the user is authenticated or not, online or offline.
-    // Cloud sync happens separately during explicit Sync operations.
     try {
-      const localItems: UploadedItem[] = [];
       const workspaceId = (await getActiveWorkspaceId()) || "";
       for (const file of Array.from(files)) {
-        const meta = await saveLocalAttachment(file, String(noteIdSnapshot), workspaceId);
-        localItems.push({
-          id: meta.id,
-          name: meta.fileName,
-          kind: meta.kind,
-          sizeLabel: meta.sizeLabel,
-          addedAt: noteLabels.justNow,
-          extractionStatus: "completed",
-          source: URL.createObjectURL(file),
-        });
+        await AttachmentService.createAttachment(file, String(selectedNote.id), workspaceId);
       }
-
-      // Persist file metadata on the local note record atomically.
-      try {
-        const metaEntries = localItems.map((item) => ({
-          id: item.id,
-          name: item.name,
-          kind: item.kind,
-          sizeLabel: item.sizeLabel,
-          addedAt: item.addedAt,
-          extractionStatus: item.extractionStatus,
-        }));
-        await lnsAppendNoteFiles(
-          workspaceId,
-          String(noteIdSnapshot),
-          metaEntries,
-          selectedNote.title,
-          selectedNote.body
-        );
-      } catch (metaErr) {
-        console.error("[AYMO] Failed to save file metadata to local note:", metaErr);
-      }
-
-      // Replace temp placeholder cards with the real local entries in React state.
-      setNotes((prev) =>
-        prev.map((note) => {
-          if (String(note.id) !== String(noteIdSnapshot)) return note;
-          const currentUploads = note.uploads || [];
-          const nonTemp = currentUploads.filter((u) => !(typeof u.id === "number" && u.id < 0));
-          const localItemIds = new Set(localItems.map((item) => String(item.id)));
-          const filteredNonTemp = nonTemp.filter((u) => !localItemIds.has(String(u.id)));
-          return { ...note, uploads: [...localItems, ...filteredNonTemp] };
-        })
-      );
     } catch (err) {
-      // Clear stuck temp items so the UI doesn't hang.
-      console.error("[AYMO] Local upload failed entirely:", err);
-      setNotes((prev) =>
-        prev.map((note) => {
-          if (String(note.id) !== String(noteIdSnapshot)) return note;
-          return { ...note, uploads: (note.uploads || []).filter((u) => !(typeof u.id === "number" && u.id < 0)) };
-        })
-      );
-      window.alert("Could not save the attachment locally. Please reload the page and try again.");
+      console.error("[AYMO] Local upload failed:", err);
+      window.alert("Could not save the attachment locally. Please try again.");
     }
   };
 
@@ -1525,85 +1477,25 @@ export default function App() {
     setActiveRightTab("uploads");
     setIsRightPanelCollapsed(false);
 
-    let createdUpload: UploadedItem;
-    if (authToken && navigator.onLine) {
-      try {
-        const created = await addLink(authToken, selectedNote.id as any, input, input.replace(/^https?:\/\//, ""));
-        createdUpload = mapFileToUpload(created, noteLabels.justNow);
-      } catch {
-        createdUpload = {
-          id: generateUuid(),
-          name: input.replace(/^https?:\/\//, ""),
-          kind: "link",
-          sizeLabel: "Link",
-          addedAt: noteLabels.justNow,
-          extractionStatus: "completed",
-          source: input,
-        };
-      }
-    } else {
-      createdUpload = {
-        id: generateUuid(),
-        name: input.replace(/^https?:\/\//, ""),
-        kind: "link",
-        sizeLabel: "Link",
-        addedAt: noteLabels.justNow,
-        extractionStatus: "completed",
-        source: input,
-      };
-    }
-
     try {
       const workspaceId = (await getActiveWorkspaceId()) || "";
-      const metaEntries = [{
-        id: createdUpload.id,
-        name: createdUpload.name,
-        kind: createdUpload.kind,
-        sizeLabel: createdUpload.sizeLabel,
-        addedAt: createdUpload.addedAt,
-        extractionStatus: createdUpload.extractionStatus,
-        source: createdUpload.source,
-      }];
-      await lnsAppendNoteFiles(
-        workspaceId,
+      await AttachmentService.createLinkAttachment(
+        input,
+        input.replace(/^https?:\/\//, ""),
         String(selectedNote.id),
-        metaEntries,
-        selectedNote.title,
-        selectedNote.body
+        workspaceId,
       );
-    } catch (metaErr) {
-      console.error("[AYMO] Failed to save link to local note:", metaErr);
+    } catch (err) {
+      console.error("[AYMO] Failed to save link attachment:", err);
     }
-
-    setNotes((prev) =>
-      prev.map((note) => {
-        if (String(note.id) !== String(selectedNote.id)) return note;
-        const currentUploads = note.uploads || [];
-        const existingIds = new Set(currentUploads.map((u) => String(u.id)));
-        if (existingIds.has(String(createdUpload.id))) return note;
-        return { ...note, uploads: [createdUpload, ...currentUploads] };
-      })
-    );
   };
 
   const handleRemoveUpload = async (fileId: string | number) => {
     if (!selectedNote) return;
 
-    // ── LOCAL-FIRST REMOVAL (all users, always) ───────────────────────────────
     try {
-      if (typeof fileId === "string") {
-        await deleteLocalAttachmentById(fileId);
-      }
       const workspaceId = (await getActiveWorkspaceId()) || "";
-      await lnsRemoveNoteFile(workspaceId, String(selectedNote.id), fileId);
-
-      setNotes((prev) =>
-        prev.map((note) =>
-          String(note.id) === String(selectedNote.id)
-            ? { ...note, uploads: (note.uploads || []).filter((upload) => String(upload.id) !== String(fileId)) }
-            : note,
-        ),
-      );
+      await AttachmentService.deleteAttachment(String(fileId), workspaceId);
     } catch (error) {
       console.error("Failed to remove local attachment", error);
       window.alert(t("app.uploadRemoveError"));
@@ -2362,7 +2254,10 @@ export default function App() {
                         pinned: restoredNote.is_pinned,
                         updatedAt: formatDisplayDate(restoredNote.updated_at),
                         updatedAtIso: restoredNote.updated_at,
-                        uploads: restoredNote.files as any,
+                        // Attachments are NOT restored from BackendNote.files (which are BackendFile
+                        // records, not UploadedItem shape). The attachment-rehydration useEffect
+                        // will reload them from IndexedDB v4 once the user opens this note.
+                        uploads: [],
                       };
                       setNotes((prev) => [homeNote, ...prev]);
                       setTrashedNoteCount((prev) => Math.max(0, prev - 1));

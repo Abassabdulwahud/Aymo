@@ -7,11 +7,11 @@ export interface LocalWorkspace {
 }
 
 const DATABASE_NAME = "aymo_local";
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 4;
 const ACTIVE_WORKSPACE_KEY = "activeWorkspaceId";
 const ACTIVE_WORKSPACE_STORAGE_KEY = "aymo.activeWorkspaceId";
 
-type StoreName =
+export type StoreName =
   | "workspaces"
   | "workspaceMetadata"
   | "notes"
@@ -21,6 +21,8 @@ type StoreName =
   | "aiHistory"
   | "attachments"
   | "attachmentBlobs"
+  | "attachmentDeletions"
+  | "migrationState"
   | "syncQueue"
   | "remoteMappings"
   | "tombstones"
@@ -67,6 +69,7 @@ function ensureSchema(database: IDBDatabase, upgradeTransaction: IDBTransaction)
   }
 
   createOrGetStore(database, upgradeTransaction, "workspaceMetadata", { keyPath: "key" });
+  createOrGetStore(database, upgradeTransaction, "migrationState", { keyPath: "key" });
 
   // ── Workspace-scoped stores with workspaceId index ─────────────────────
   const workspaceScopedStores: StoreName[] = [
@@ -77,6 +80,7 @@ function ensureSchema(database: IDBDatabase, upgradeTransaction: IDBTransaction)
     "aiHistory",
     "attachments",
     "attachmentBlobs",
+    "attachmentDeletions",
     "syncQueue",
     "remoteMappings",
     "tombstones",
@@ -90,14 +94,40 @@ function ensureSchema(database: IDBDatabase, upgradeTransaction: IDBTransaction)
     }
   }
 
+  // ── v4: attachments indexes ─────────────────────────────────────────────
+  if (database.objectStoreNames.contains("attachments")) {
+    const att = upgradeTransaction.objectStore("attachments");
+    if (!att.indexNames.contains("noteId")) {
+      att.createIndex("noteId", "noteId");
+    }
+    if (!att.indexNames.contains("syncState")) {
+      att.createIndex("syncState", "syncState");
+    }
+    if (!att.indexNames.contains("noteId_syncState")) {
+      att.createIndex("noteId_syncState", ["noteId", "syncState"]);
+    }
+  }
+
+  // ── v4: attachmentDeletions indexes ──────────────────────────────────────
+  if (database.objectStoreNames.contains("attachmentDeletions")) {
+    const del = upgradeTransaction.objectStore("attachmentDeletions");
+    if (!del.indexNames.contains("localAttachmentId")) {
+      del.createIndex("localAttachmentId", "localAttachmentId");
+    }
+    if (!del.indexNames.contains("status")) {
+      del.createIndex("status", "status");
+    }
+    if (!del.indexNames.contains("workspaceId_localAttachmentId")) {
+      del.createIndex("workspaceId_localAttachmentId", ["workspaceId", "localAttachmentId"], { unique: true });
+    }
+  }
+
   // ── v2: syncState store (workspace-level sync metadata) ───────────────
-  // keyPath is workspaceId so each workspace has exactly one record.
   if (!database.objectStoreNames.contains("syncState")) {
     database.createObjectStore("syncState", { keyPath: "workspaceId" });
   }
 
   // ── v2: extra indexes on syncQueue for efficient queue polling ─────────
-  // We must use the upgrade transaction to access an already-existing store.
   if (database.objectStoreNames.contains("syncQueue")) {
     const sq = upgradeTransaction.objectStore("syncQueue");
     if (!sq.indexNames.contains("status")) {
@@ -129,14 +159,21 @@ export function openLocalWorkspaceDatabase(): Promise<IDBDatabase> {
   }
 
   databasePromise = new Promise((resolve, reject) => {
-    if (!("indexedDB" in window)) {
-      reject(new Error("IndexedDB is not available in this browser."));
+    const idb =
+      typeof indexedDB !== "undefined"
+        ? indexedDB
+        : typeof window !== "undefined"
+        ? window.indexedDB
+        : (globalThis as any).indexedDB;
+
+    if (!idb) {
+      reject(new Error("IndexedDB is not available in this environment."));
       return;
     }
 
-    const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+    const request = idb.open(DATABASE_NAME, DATABASE_VERSION);
 
-    request.onupgradeneeded = (event) => {
+    request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
       const upgradeTransaction = (event.target as IDBOpenDBRequest).transaction!;
       ensureSchema(request.result, upgradeTransaction);
     };
@@ -151,6 +188,7 @@ export function openLocalWorkspaceDatabase(): Promise<IDBDatabase> {
     };
 
     request.onerror = () => {
+      databasePromise = null;
       reject(request.error ?? new Error("Could not open local workspace database."));
     };
   });
@@ -158,7 +196,7 @@ export function openLocalWorkspaceDatabase(): Promise<IDBDatabase> {
   return databasePromise;
 }
 
-function runTransaction<T>(
+export function runTransaction<T>(
   storeNames: StoreName | StoreName[],
   mode: IDBTransactionMode,
   operation: (transaction: IDBTransaction) => Promise<T>,
@@ -223,7 +261,7 @@ function runTransaction<T>(
   );
 }
 
-function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
+export function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("Local database request failed."));
@@ -350,7 +388,7 @@ export interface LocalNote {
   updatedAt: string;
   deletedAt: string | null; // ISO string if trashed
   tags: string[];
-  files: any[];
+  files?: any[];
 }
 
 export async function listLocalNotes(workspaceId: string, includeTrashed = false): Promise<LocalNote[]> {

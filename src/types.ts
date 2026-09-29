@@ -81,3 +81,108 @@ export interface Annotation {
   created_at: string;
   updated_at: string;
 }
+
+// ─── Phase 3A Attachment Subsystem Types ─────────────────────────────────────
+
+export type AttachmentKind =
+  | "image"
+  | "pdf"
+  | "video"
+  | "audio"
+  | "document"
+  | "link";
+
+export type DurableLocalState =
+  | "LOCAL_READY"
+  | "LOCAL_FAILED";
+
+export type SyncState =
+  | "NOT_QUEUED"
+  | "PENDING"
+  | "SYNCING"
+  | "SYNCED"
+  | "FAILED";
+
+export type LocalErrorCode =
+  | "MISSING_BLOB"
+  | "CORRUPTED_BLOB"
+  | "STORAGE_QUOTA_EXCEEDED"
+  | "WRITE_ABORTED"
+  | null;
+
+export type SyncErrorCategory =
+  | "temporary_network"
+  | "permanent_auth"
+  | "remote_quota"
+  | "server_error"
+  | null;
+
+export interface AttachmentRecord {
+  id: string;
+  noteId: string;
+  workspaceId: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  kind: AttachmentKind;
+  extension: string;
+  localState: DurableLocalState;
+  localError?: string | null;
+  localErrorCode?: LocalErrorCode;
+  syncState: SyncState;
+  retryCount: number;
+  nextRetryAt: string | null;
+  lastSyncError: string | null;
+  syncErrorCode: string | null;
+  errorCategory: SyncErrorCategory;
+  createdAt: string;
+  updatedAt: string;
+  remoteId?: string;
+  cloudinaryPublicId?: string;
+  remoteUrl?: string;
+  blobDiagnosticStatus?:
+    | "blob_verified"
+    | "blob_missing"
+    | "unchecked";
+}
+
+export interface AttachmentBlobRecord {
+  id: string;
+  workspaceId: string;
+  blob: Blob;
+  mimeType: string;
+  updatedAt: string;
+}
+
+export type RemoteDeletionState =
+  | "PENDING"
+  | "IN_PROGRESS"
+  | "COMPLETED"
+  | "FAILED";
+
+export interface AttachmentDeletionRecord {
+  id: string;
+  workspaceId: string;
+  localAttachmentId: string;
+  remoteId?: string;
+  cloudinaryPublicId?: string;
+  deletedAt: string;
+  status: RemoteDeletionState;
+  retryCount: number;
+  lastError?: string | null;
+}
+
+export interface MigrationStateRecord {
+  key: string;
+  version: number;
+  status: "pending" | "in_progress" | "completed" | "failed";
+  migratedNoteCount: number;
+  totalNotesCount: number;
+  migratedAttachmentCount: number;
+  missingBlobCount: number;
+  lastProcessedNoteId: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  error?: string | null;
+}
+

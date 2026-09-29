@@ -101,7 +101,7 @@ export async function updateNote(
 export async function appendNoteFiles(
   workspaceId: string,
   noteId: string,
-  newFiles: any[],
+  _newFiles: any[],
   fallbackTitle = "",
   fallbackBody = "",
 ): Promise<LocalNote> {
@@ -124,33 +124,24 @@ export async function appendNoteFiles(
       updatedAt: now,
       deletedAt: null,
       tags: [],
-      files: [],
     };
   }
 
-  const existingFiles = localNote.files ?? [];
-  const existingIds = new Set(existingFiles.map((f: any) => String(f.id)));
-  const filteredNew = newFiles.filter((f: any) => !existingIds.has(String(f.id)));
-  const updatedFiles = [...existingFiles, ...filteredNew];
-
   const updatedNote: LocalNote = {
     ...localNote,
-    files: updatedFiles,
     updatedAt: now,
   };
+  delete (updatedNote as any).files;
 
   await putLocalNote(updatedNote);
   void enqueueQuietly(workspaceId, "update", updatedNote.id, noteToPayload(updatedNote));
   return updatedNote;
 }
 
-/**
- * Atomically removes a file metadata entry from a note's `files` array in IndexedDB.
- */
 export async function removeNoteFile(
   workspaceId: string,
   noteId: string,
-  fileId: string | number,
+  _fileId: string | number,
 ): Promise<LocalNote | null> {
   let localNote = await getLocalNote(noteId);
   if (!localNote && workspaceId) {
@@ -159,12 +150,11 @@ export async function removeNoteFile(
   }
   if (!localNote) return null;
 
-  const updatedFiles = (localNote.files ?? []).filter((f: any) => String(f.id) !== String(fileId));
   const updatedNote: LocalNote = {
     ...localNote,
-    files: updatedFiles,
     updatedAt: new Date().toISOString(),
   };
+  delete (updatedNote as any).files;
 
   await putLocalNote(updatedNote);
   void enqueueQuietly(workspaceId, "update", updatedNote.id, noteToPayload(updatedNote));
