@@ -388,7 +388,6 @@ export interface LocalNote {
   updatedAt: string;
   deletedAt: string | null; // ISO string if trashed
   tags: string[];
-  files?: any[];
 }
 
 export async function listLocalNotes(workspaceId: string, includeTrashed = false): Promise<LocalNote[]> {

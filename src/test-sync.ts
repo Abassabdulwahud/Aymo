@@ -73,7 +73,6 @@ async function runTests() {
       isPinned: false,
       isFavorited: false,
       tags: [],
-      files: [],
       deletedAt: null
     });
     note1Id = note1.id;
@@ -96,7 +95,6 @@ async function runTests() {
       isPinned: false,
       isFavorited: false,
       tags: [],
-      files: [],
       deletedAt: null
     });
     await trashNote(note2);
@@ -109,7 +107,6 @@ async function runTests() {
       isPinned: false,
       isFavorited: false,
       tags: [],
-      files: [],
       deletedAt: null
     });
     await permanentlyDeleteNote(note3);

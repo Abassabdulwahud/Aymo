@@ -476,9 +476,6 @@ export class SyncService {
               tags: Array.isArray(change.payload.tags)
                 ? change.payload.tags.map(String)
                 : existingLocal?.tags ?? [],
-              files: Array.isArray(change.payload.files)
-                ? change.payload.files
-                : existingLocal?.files ?? [],
               deletedAt: (change.payload.deleted_at ??
                 change.payload.deletedAt ??
                 null) as string | null,

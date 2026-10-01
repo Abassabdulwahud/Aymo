@@ -234,7 +234,7 @@ function mapNoteToHomeNote(note: BackendNote, labels: { untitled: string; untagg
     pinned: note.is_pinned,
     updatedAt: formatDisplayDate(note.updated_at),
     updatedAtIso: note.updated_at,
-    uploads: note.files.map((file) => mapFileToUpload(file, labels.justNow)),
+    uploads: [],
   };
 }
 
@@ -1100,7 +1100,6 @@ export default function App() {
         isFavorited: false,
         deletedAt: null,
         tags: [],
-        files: [],
       });
       const mapped = mapLocalNoteToHomeNote(localNote, noteLabels);
       lastSyncedRef.current[mapped.id] = { title: mapped.title, body: mapped.body };
@@ -1197,111 +1196,15 @@ export default function App() {
     setNotes((prev) =>
       prev.map((note) => {
         if (String(note.id) !== String(nextNote.id)) return note;
-        // ── Preserve in-memory blob source URLs and local uploads ────────────
-        // When note metadata (title, pin, body) is saved, mapLocalNoteToHomeNote
-        // re-derives uploads from LocalNote.files which has no `source` field.
-        // We merge the current in-memory `source` (Object URL / CDN URL) back
-        // in so PDF/image/video/audio viewers never lose their render source.
-        const currentUploads = note.uploads || [];
-        const nextUploads = nextNote.uploads;
-
-        let finalUploads: UploadedItem[];
-        if (!nextUploads) {
-          finalUploads = currentUploads;
-        } else {
-          const sourceById = new Map(
-            currentUploads.filter((u) => u.source).map((u) => [String(u.id), u.source as string]),
-          );
-          const nextUploadsWithSources = nextUploads.map((u) =>
-            u.source ? u : { ...u, source: sourceById.get(String(u.id)) },
-          );
-          const nextIds = new Set(nextUploads.map((u) => String(u.id)));
-          const currentOnly = currentUploads.filter((u) => !nextIds.has(String(u.id)));
-          finalUploads = [...currentOnly, ...nextUploadsWithSources];
-        }
-        return { ...nextNote, uploads: finalUploads };
+        // Preserve current local attachment list when updating note metadata
+        return { ...nextNote, uploads: note.uploads || [] };
       })
     );
   };
 
-  const queueExtractionForFile = async (file: Pick<BackendFile, "id" | "file_type">) => {
+  const queueExtractionForFile = async (_file: Pick<BackendFile, "id" | "file_type">) => {
     // Automatic extraction disabled.
   };
-
-  const refreshNoteFiles = async () => {
-    if (!authToken || !selectedNote) return;
-
-    // If we just finished an upload < 2s ago, skip this poll tick. The backend
-    // may not yet have the new record, and an early poll would briefly show the
-    // file list without the freshly uploaded entry (perceived as "disappeared").
-    if (Date.now() - lastUploadAtRef.current < 2000) return;
-
-    try {
-      const files = await getNoteFiles(authToken, selectedNote.id as any);
-      const mapped = files.map((file) => mapFileToUpload(file, noteLabels.justNow));
-
-      setNotes((prev) =>
-        prev.map((note) => {
-          if (String(note.id) !== String(selectedNote.id)) return note;
-
-          // 1. Always keep optimistic temp entries (negative IDs) so they
-          //    remain visible while the network round-trip is still in flight.
-          const tempEntries = (note.uploads || []).filter((u) => typeof u.id === "number" && u.id < 0);
-
-          // 2. From the polled backend list, skip any ID that is currently
-          //    tracked as a pending upload that we haven't confirmed yet.
-          const freshMapped = mapped.filter(
-            (u) => !pendingUploadIdsRef.current.has(u.id as any)
-          );
-
-          // 3. Keep all local/offline attachments (string IDs) AND any positive numeric IDs
-          //    already in local state that are NOT in the polled backend list yet.
-          const nonPolledEntries = (note.uploads || []).filter((u) => {
-            if (typeof u.id === "number" && u.id < 0) return false;
-            if (typeof u.id === "string") return true;
-            return !mapped.some((m) => String(m.id) === String(u.id));
-          });
-
-          // Preserve any in-memory sources (e.g. blob URLs or CDN URLs) from existing uploads
-          const sourceMap = new Map(
-            (note.uploads || []).filter((u) => u.source).map((u) => [String(u.id), u.source as string])
-          );
-          const freshMappedWithSources = freshMapped.map((u) =>
-            u.source ? u : { ...u, source: sourceMap.get(String(u.id)) }
-          );
-
-          return {
-            ...note,
-            uploads: [...tempEntries, ...nonPolledEntries, ...freshMappedWithSources],
-          };
-        })
-      );
-    } catch {
-      // Fail silently in the background
-    }
-  };
-
-  useEffect(() => {
-    if (!authToken || !selectedNote) return;
-
-    // Check if any file is actively extracting
-    const hasActiveExtraction = selectedNote.uploads.some(
-      (upload) =>
-        upload.extractionStatus === "pending" ||
-        upload.extractionStatus === "queued" ||
-        upload.extractionStatus?.startsWith("processing")
-    );
-
-    if (!hasActiveExtraction) return;
-
-    const intervalId = window.setInterval(() => {
-      void refreshNoteFiles();
-    }, 3000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [selectedNote, authToken]);
 
   const createNewNote = async () => {
     setIsBusy(true);
@@ -1317,7 +1220,6 @@ export default function App() {
         isFavorited: false,
         deletedAt: null,
         tags: [],
-        files: [],
       });
       const created = mapLocalNoteToHomeNote(localNote, noteLabels);
       lastSyncedRef.current[created.id] = { title: created.title, body: created.body };

@@ -39,7 +39,7 @@ function mapLocalNoteToBackendNote(localNote: LocalNote): BackendNote {
     updated_at: localNote.updatedAt,
     deleted_at: localNote.deletedAt,
     tags: localNote.tags.map((t, idx) => ({ id: idx, name: t })),
-    files: localNote.files || [],
+    files: [],
   };
 }
 

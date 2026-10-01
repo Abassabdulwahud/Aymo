@@ -94,72 +94,7 @@ export async function updateNote(
   return updated;
 }
 
-/**
- * Atomically appends file metadata entries to a note's `files` array in IndexedDB.
- * If the note doesn't exist in IndexedDB yet, creates it.
- */
-export async function appendNoteFiles(
-  workspaceId: string,
-  noteId: string,
-  _newFiles: any[],
-  fallbackTitle = "",
-  fallbackBody = "",
-): Promise<LocalNote> {
-  let localNote = await getLocalNote(noteId);
-  if (!localNote && workspaceId) {
-    const allLocal = await listLocalNotes(workspaceId, false);
-    localNote = allLocal.find((n) => String(n.id) === String(noteId)) ?? null;
-  }
 
-  const now = new Date().toISOString();
-  if (!localNote) {
-    localNote = {
-      id: noteId,
-      workspaceId,
-      title: fallbackTitle,
-      body: fallbackBody,
-      isPinned: false,
-      isFavorited: false,
-      createdAt: now,
-      updatedAt: now,
-      deletedAt: null,
-      tags: [],
-    };
-  }
-
-  const updatedNote: LocalNote = {
-    ...localNote,
-    updatedAt: now,
-  };
-  delete (updatedNote as any).files;
-
-  await putLocalNote(updatedNote);
-  void enqueueQuietly(workspaceId, "update", updatedNote.id, noteToPayload(updatedNote));
-  return updatedNote;
-}
-
-export async function removeNoteFile(
-  workspaceId: string,
-  noteId: string,
-  _fileId: string | number,
-): Promise<LocalNote | null> {
-  let localNote = await getLocalNote(noteId);
-  if (!localNote && workspaceId) {
-    const allLocal = await listLocalNotes(workspaceId, false);
-    localNote = allLocal.find((n) => String(n.id) === String(noteId)) ?? null;
-  }
-  if (!localNote) return null;
-
-  const updatedNote: LocalNote = {
-    ...localNote,
-    updatedAt: new Date().toISOString(),
-  };
-  delete (updatedNote as any).files;
-
-  await putLocalNote(updatedNote);
-  void enqueueQuietly(workspaceId, "update", updatedNote.id, noteToPayload(updatedNote));
-  return updatedNote;
-}
 
 
 // ─── Soft Delete (Trash) ──────────────────────────────────────────────────────
@@ -285,7 +220,6 @@ function noteToPayload(note: LocalNote): Record<string, unknown> {
     isPinned: note.isPinned,
     isFavorited: note.isFavorited,
     tags: note.tags,
-    files: note.files,
     deletedAt: note.deletedAt,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
