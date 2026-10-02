@@ -1359,15 +1359,16 @@ export default function App() {
   };
 
   const handleUpload = async (files: FileList | null) => {
+    const fileArray = files ? Array.from(files) : [];
     const wsId = (await getActiveWorkspaceId()) || "";
-    console.log(`[AYMO-UPLOAD-DIAG] T3 handleUpload START count=${files?.length || 0} noteId=${selectedNote?.id} workspaceId=${wsId} authenticated=${Boolean(authToken)} online=${navigator.onLine}`);
-    if (!selectedNote || !files || files.length === 0) return;
+    console.log(`[AYMO-UPLOAD-DIAG] T3 handleUpload START count=${fileArray.length} noteId=${selectedNote?.id} workspaceId=${wsId} authenticated=${Boolean(authToken)} online=${navigator.onLine}`);
+    if (!selectedNote || fileArray.length === 0) return;
 
     setActiveRightTab("uploads");
     setIsRightPanelCollapsed(false);
 
     try {
-      for (const file of Array.from(files)) {
+      for (const file of fileArray) {
         await AttachmentService.createAttachment(file, String(selectedNote.id), wsId);
       }
     } catch (err: any) {
