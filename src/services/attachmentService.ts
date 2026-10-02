@@ -68,6 +68,7 @@ export function subscribeAttachmentChanges(
 }
 
 function notifyAttachmentListeners(event: AttachmentEvent): void {
+  console.log(`[AYMO-UPLOAD-DIAG] T8 attachment change notification EMITTED action=${event.action} workspaceId=${event.workspaceId} noteId=${event.noteId ?? "—"} attachmentId=${event.attachmentId ?? "—"}`);
   if (DEV) {
     console.debug(
       `[AYMO-ATT] event action=${event.action} workspaceId=${event.workspaceId} noteId=${event.noteId ?? "—"} attachmentId=${event.attachmentId ?? "—"}`,
@@ -77,7 +78,7 @@ function notifyAttachmentListeners(event: AttachmentEvent): void {
     try {
       listener(event);
     } catch (err) {
-      console.error("[AttachmentService] Listener error:", err);
+      console.error("[AYMO-UPLOAD-DIAG] ERROR stage=T8 listener", err);
     }
   });
 }
@@ -156,7 +157,15 @@ export class AttachmentService {
       sizeBytes: file.size,
     });
 
-    const committed = await AttachmentRepository.commitLocalAttachment(record, file);
+    console.log(`[AYMO-UPLOAD-DIAG] T4 createAttachment START id=${record.id} noteId=${noteId} workspaceId=${wsId} name=${file.name} size=${file.size} mime=${file.type}`);
+
+    let committed: AttachmentRecord;
+    try {
+      committed = await AttachmentRepository.commitLocalAttachment(record, file);
+    } catch (err: any) {
+      console.error("[AYMO-UPLOAD-DIAG] ERROR stage=T4 createAttachment commitLocalAttachment", err);
+      throw err;
+    }
 
     if (DEV) {
       console.debug(

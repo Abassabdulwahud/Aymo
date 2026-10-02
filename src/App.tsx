@@ -922,12 +922,15 @@ export default function App() {
 
     const loadAttachments = async () => {
       const wsId = (await getActiveWorkspaceId()) || "";
+      console.log(`[AYMO-UPLOAD-DIAG] T9 listAttachments START workspaceId=${wsId} noteId=${selectedNote?.id}`);
       if (!wsId || !selectedNote) return;
 
       try {
         const records = await AttachmentService.listAttachments(String(selectedNote.id), wsId);
+        console.log(`[AYMO-UPLOAD-DIAG] T9 listAttachments RESULT count=${records.length} ids=${records.map((r) => r.id).join(",")}`);
         if (isCancelled) return;
         const uploadedItems = records.map(mapAttachmentRecordToUploadedItem);
+        console.log(`[AYMO-UPLOAD-DIAG] T10 uploads state UPDATE count=${uploadedItems.length} ids=${uploadedItems.map((u) => u.id).join(",")}`);
 
         setNotes((prev) =>
           prev.map((n) =>
@@ -936,14 +939,15 @@ export default function App() {
               : n,
           ),
         );
-      } catch (err) {
-        console.error("Failed to load attachments for note:", err);
+      } catch (err: any) {
+        console.error("[AYMO-UPLOAD-DIAG] ERROR stage=T9 listAttachments", err);
       }
     };
 
     void loadAttachments();
 
     const unsubscribe = subscribeAttachmentChanges((event) => {
+      console.log(`[AYMO-UPLOAD-DIAG] T8 attachment change notification RECEIVED action=${event.action} noteId=${event.noteId}`);
       if (!event.noteId || String(event.noteId) === String(selectedNote.id)) {
         void loadAttachments();
       }
@@ -1355,18 +1359,19 @@ export default function App() {
   };
 
   const handleUpload = async (files: FileList | null) => {
+    const wsId = (await getActiveWorkspaceId()) || "";
+    console.log(`[AYMO-UPLOAD-DIAG] T3 handleUpload START count=${files?.length || 0} noteId=${selectedNote?.id} workspaceId=${wsId} authenticated=${Boolean(authToken)} online=${navigator.onLine}`);
     if (!selectedNote || !files || files.length === 0) return;
 
     setActiveRightTab("uploads");
     setIsRightPanelCollapsed(false);
 
     try {
-      const workspaceId = (await getActiveWorkspaceId()) || "";
       for (const file of Array.from(files)) {
-        await AttachmentService.createAttachment(file, String(selectedNote.id), workspaceId);
+        await AttachmentService.createAttachment(file, String(selectedNote.id), wsId);
       }
-    } catch (err) {
-      console.error("[AYMO] Local upload failed:", err);
+    } catch (err: any) {
+      console.error("[AYMO-UPLOAD-DIAG] ERROR stage=T3 handleUpload", err);
       window.alert("Could not save the attachment locally. Please try again.");
     }
   };

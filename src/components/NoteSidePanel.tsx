@@ -122,7 +122,9 @@ export function NoteSidePanel({
   const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
     event.preventDefault();
     setIsDragging(false);
-    onFileUpload(event.dataTransfer.files);
+    const files = event.dataTransfer.files;
+    console.log(`[AYMO-UPLOAD-DIAG] T2 drop event count=${files?.length || 0} name=${files?.[0]?.name || "none"} size=${files?.[0]?.size || 0} type=${files?.[0]?.type || "none"}`);
+    onFileUpload(files);
   };
 
   const openUpload = (upload: UploadedItem) => {
@@ -143,67 +145,79 @@ export function NoteSidePanel({
   };
 
   // ── Renders ─────────────────────────────────────────────────────────────────
-  const renderUploads = () => (
-    <div className="tab-panel-body uploads-view">
-      <div className="upload-head">
-        <div>
-          <h2>{t("tab.uploads")}</h2>
-          <p className="upload-subtitle">{uploads.length} {t("uploads.count")}</p>
+  const renderUploads = () => {
+    console.log(`[AYMO-UPLOAD-DIAG] T11 Uploads render count=${uploads.length} ids=${uploads.map((u) => u.id).join(",")}`);
+    return (
+      <div className="tab-panel-body uploads-view">
+        <div className="upload-head">
+          <div>
+            <h2>{t("tab.uploads")}</h2>
+            <p className="upload-subtitle">{uploads.length} {t("uploads.count")}</p>
+          </div>
+          <button className="icon-only-button" type="button" onClick={onAddLink} aria-label={t("uploads.addLink")}>
+            <Link size={18} strokeWidth={2} />
+          </button>
         </div>
-        <button className="icon-only-button" type="button" onClick={onAddLink} aria-label={t("uploads.addLink")}>
-          <Link size={18} strokeWidth={2} />
-        </button>
-      </div>
 
-      <label
-        className={`upload-dropzone ${isDragging ? "drag-active" : ""}`}
-        htmlFor="tabbed-file-upload"
-        onDragEnter={(event) => {
-          event.preventDefault();
-          setIsDragging(true);
-        }}
-        onDragOver={(event) => event.preventDefault()}
-        onDragLeave={() => setIsDragging(false)}
-        onDrop={handleDrop}
-      >
-        <input
-          id="tabbed-file-upload"
-          type="file"
-          multiple
-          onChange={(event) => {
-            onFileUpload(event.target.files);
-            event.target.value = "";
+        <label
+          className={`upload-dropzone ${isDragging ? "drag-active" : ""}`}
+          htmlFor="tabbed-file-upload"
+          onClick={() => {
+            console.log("[AYMO-UPLOAD-DIAG] T0 upload control activated input=tabbed-file-upload");
           }}
-          accept=".pdf,.doc,.docx,.txt,.ppt,.pptx,.xls,.xlsx,.mp4,.mov,.mkv,.webm,.mp3,.wav,.m4a,.aac,.ogg,.png,.jpg,.jpeg,.gif,.webp"
-        />
-        <Plus size={22} strokeWidth={1.8} />
-        <p>{t("uploads.dropHint")}</p>
-        <span>{t("uploads.supported")}</span>
-      </label>
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+        >
+          <input
+            id="tabbed-file-upload"
+            type="file"
+            multiple
+            onClick={(e) => {
+              e.stopPropagation();
+              console.log("[AYMO-UPLOAD-DIAG] T0 upload control activated input=tabbed-file-upload-input");
+            }}
+            onChange={(event) => {
+              const files = event.target.files;
+              console.log(`[AYMO-UPLOAD-DIAG] T1 file input change count=${files?.length || 0} name=${files?.[0]?.name || "none"} size=${files?.[0]?.size || 0} type=${files?.[0]?.type || "none"}`);
+              onFileUpload(files);
+              event.target.value = "";
+            }}
+            accept=".pdf,.doc,.docx,.txt,.ppt,.pptx,.xls,.xlsx,.mp4,.mov,.mkv,.webm,.mp3,.wav,.m4a,.aac,.ogg,.png,.jpg,.jpeg,.gif,.webp"
+          />
+          <Plus size={22} strokeWidth={1.8} />
+          <p>{t("uploads.dropHint")}</p>
+          <span>{t("uploads.supported")}</span>
+        </label>
 
-      <div className="uploads-tab-list">
-        {uploads.map((upload) => (
-          <article key={upload.id} className="upload-card">
-            <div className="upload-row">
-              <button className="upload-row-main" type="button" onClick={() => openUpload(upload)}>
-                <FileText size={20} strokeWidth={1.8} />
-                <span className="upload-row-copy">
-                  <strong>{upload.name}</strong>
-                  <span>
-                    {upload.sizeLabel} | {t("uploads.added")} {upload.addedAt}
+        <div className="uploads-tab-list">
+          {uploads.map((upload) => (
+            <article key={upload.id} className="upload-card">
+              <div className="upload-row">
+                <button className="upload-row-main" type="button" onClick={() => openUpload(upload)}>
+                  <FileText size={20} strokeWidth={1.8} />
+                  <span className="upload-row-copy">
+                    <strong>{upload.name}</strong>
+                    <span>
+                      {upload.sizeLabel} | {t("uploads.added")} {upload.addedAt}
+                    </span>
                   </span>
-                </span>
-              </button>
-              <button className="icon-only-button" type="button" onClick={() => onRemoveUpload(upload.id)} aria-label={t("uploads.remove")}>
-                <Trash2 size={17} strokeWidth={1.8} />
-              </button>
-            </div>
-          </article>
-        ))}
-        {uploads.length === 0 ? <div className="assistant-empty">{t("uploads.empty")}</div> : null}
+                </button>
+                <button className="icon-only-button" type="button" onClick={() => onRemoveUpload(upload.id)} aria-label={t("uploads.remove")}>
+                  <Trash2 size={17} strokeWidth={1.8} />
+                </button>
+              </div>
+            </article>
+          ))}
+          {uploads.length === 0 ? <div className="assistant-empty">{t("uploads.empty")}</div> : null}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderViewer = () => {
     if (!selectedUpload) {

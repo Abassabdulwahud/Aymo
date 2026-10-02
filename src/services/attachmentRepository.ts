@@ -81,6 +81,7 @@ export class AttachmentRepository {
     record: AttachmentRecord,
     blob: Blob,
   ): Promise<AttachmentRecord> {
+    console.log(`[AYMO-UPLOAD-DIAG] T5 commitLocalAttachment START id=${record.id} noteId=${record.noteId} workspaceId=${record.workspaceId} sizeBytes=${record.sizeBytes}`);
     if (DEV) {
       console.debug(
         `[AYMO-REPO] commitLocalAttachment id=${record.id} noteId=${record.noteId} workspaceId=${record.workspaceId} name="${record.name}" sizeBytes=${record.sizeBytes} blobSize=${blob.size}`,
@@ -95,17 +96,37 @@ export class AttachmentRepository {
       updatedAt: record.updatedAt,
     };
 
-    await runTransaction(
-      ["attachments", "attachmentBlobs"],
-      "readwrite",
-      async (tx) => {
-        const attStore = tx.objectStore("attachments");
-        const blobStore = tx.objectStore("attachmentBlobs");
+    console.log(`[AYMO-UPLOAD-DIAG] T6 IDB transaction START id=${record.id}`);
+    try {
+      await runTransaction(
+        ["attachments", "attachmentBlobs"],
+        "readwrite",
+        async (tx) => {
+          const attStore = tx.objectStore("attachments");
+          const blobStore = tx.objectStore("attachmentBlobs");
 
-        attStore.put(record);
-        blobStore.put(blobRecord);
-      },
-    );
+          console.log(`[AYMO-UPLOAD-DIAG] T6A attachments.put START id=${record.id}`);
+          attStore.put(record);
+          console.log(`[AYMO-UPLOAD-DIAG] T6B attachmentBlobs.put START id=${record.id}`);
+          blobStore.put(blobRecord);
+        },
+      );
+      console.log(`[AYMO-UPLOAD-DIAG] T6C IDB transaction COMPLETE id=${record.id}`);
+    } catch (err: any) {
+      console.error(`[AYMO-UPLOAD-DIAG] T6C IDB transaction ERROR id=${record.id}`, err);
+      throw err;
+    }
+
+    // T7 Diagnostic Verification
+    try {
+      const verifiedAtt = await this.getAttachment(record.id, record.workspaceId);
+      const verifiedBlob = await this.getAttachmentBlob(record.id, record.workspaceId);
+      console.log(
+        `[AYMO-UPLOAD-DIAG] T7 IDB VERIFY attachmentExists=${Boolean(verifiedAtt)} blobExists=${Boolean(verifiedBlob)} blobValid=${verifiedBlob instanceof Blob} blobSize=${verifiedBlob?.size ?? 0} noteId=${verifiedAtt?.noteId ?? "none"} workspaceId=${verifiedAtt?.workspaceId ?? "none"}`,
+      );
+    } catch (verifyErr: any) {
+      console.error("[AYMO-UPLOAD-DIAG] T7 IDB VERIFY ERROR", verifyErr);
+    }
 
     if (DEV) {
       console.debug(`[AYMO-REPO] commitLocalAttachment TX COMPLETE id=${record.id}`);

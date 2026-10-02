@@ -14,7 +14,9 @@ export function UploadSection({ uploads, onFileUpload, onAddLink, onRemoveUpload
   const [isExpanded, setIsExpanded] = useState(false);
 
   const handleInput = (event: ChangeEvent<HTMLInputElement>) => {
-    onFileUpload(event.target.files);
+    const files = event.target.files;
+    console.log(`[AYMO-UPLOAD-DIAG] T1 file input change count=${files?.length || 0} name=${files?.[0]?.name || "none"} size=${files?.[0]?.size || 0} type=${files?.[0]?.type || "none"}`);
+    onFileUpload(files);
   };
 
   const handleDragOver = (event: DragEvent<HTMLLabelElement>) => {
@@ -29,8 +31,12 @@ export function UploadSection({ uploads, onFileUpload, onAddLink, onRemoveUpload
   const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
     event.preventDefault();
     setIsDragging(false);
-    onFileUpload(event.dataTransfer.files);
+    const files = event.dataTransfer.files;
+    console.log(`[AYMO-UPLOAD-DIAG] T2 drop event count=${files?.length || 0} name=${files?.[0]?.name || "none"} size=${files?.[0]?.size || 0} type=${files?.[0]?.type || "none"}`);
+    onFileUpload(files);
   };
+
+  console.log(`[AYMO-UPLOAD-DIAG] T11 Uploads render count=${uploads.length} ids=${uploads.map((u) => u.id).join(",")}`);
 
   return (
     <section className="panel upload-panel" aria-label="Upload section">
