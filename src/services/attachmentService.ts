@@ -287,4 +287,24 @@ export class AttachmentService {
 
     return updated;
   }
+
+  /**
+   * Replaces an existing attachment with a new file.
+   * Creates a new attachment with a new UUID and atomically deletes the old attachment.
+   */
+  static async replaceAttachment(
+    oldAttachmentId: string,
+    newFile: File,
+    noteId: string,
+    workspaceId?: string,
+  ): Promise<AttachmentRecord> {
+    const wsId = workspaceId || (await getActiveWorkspaceId()) || "";
+    const newRecord = await this.createAttachment(newFile, noteId, wsId);
+    try {
+      await this.deleteAttachment(oldAttachmentId, wsId);
+    } catch (err) {
+      console.error("[AYMO-ATT] replaceAttachment error deleting old attachment", err);
+    }
+    return newRecord;
+  }
 }

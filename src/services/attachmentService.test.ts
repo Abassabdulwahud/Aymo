@@ -209,4 +209,24 @@ describe("Phase 3B: AttachmentService Local UI Integration Suite", () => {
     const retrievedBlob = await AttachmentService.getAttachmentBlob(record.id, WORKSPACE_1);
     expect(retrievedBlob.size).toBe(2 * 1024 * 1024);
   });
+
+  // 17. Replace attachment
+  it("17. replaces old attachment with new attachment having a new UUID and removes old attachment", async () => {
+    const oldFile = new File(["old content"], "old.txt", { type: "text/plain" });
+    const oldRecord = await AttachmentService.createAttachment(oldFile, "note-rep", WORKSPACE_1);
+
+    const newFile = new File(["new replaced content"], "new.txt", { type: "text/plain" });
+    const newRecord = await AttachmentService.replaceAttachment(oldRecord.id, newFile, "note-rep", WORKSPACE_1);
+
+    expect(newRecord.id).not.toBe(oldRecord.id);
+    expect(newRecord.name).toBe("new.txt");
+
+    const list = await AttachmentService.listAttachments("note-rep", WORKSPACE_1);
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe(newRecord.id);
+
+    await expect(
+      AttachmentService.getAttachmentBlob(oldRecord.id, WORKSPACE_1),
+    ).rejects.toThrow();
+  });
 });
