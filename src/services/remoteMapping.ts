@@ -53,12 +53,14 @@ export async function setRemoteMapping(
     const tx = db.transaction("remoteMappings", "readwrite");
     const store = tx.objectStore("remoteMappings");
 
-    // Check if a mapping already exists for this localId.
     const index = store.index("localId");
-    const getReq = index.get(localId);
+    const getReq = index.getAll(localId);
 
     getReq.onsuccess = () => {
-      const existing = getReq.result as RemoteMapping | undefined;
+      const records = (getReq.result as RemoteMapping[] | undefined) ?? [];
+      const existing = records.find(
+        (m) => m.workspaceId === workspaceId && m.entityType === entityType,
+      );
       const now = new Date().toISOString();
 
       const mapping: RemoteMapping = existing
@@ -89,8 +91,8 @@ export async function setRemoteMapping(
  * never been synced to the cloud.
  */
 export async function getRemoteMapping(
-  _workspaceId: string,
-  _entityType: SyncEntityType,
+  workspaceId: string,
+  entityType: SyncEntityType,
   localId: string,
 ): Promise<RemoteMapping | null> {
   const db = await openLocalWorkspaceDatabase();
@@ -98,8 +100,16 @@ export async function getRemoteMapping(
   return new Promise((resolve, reject) => {
     const tx = db.transaction("remoteMappings", "readonly");
     const index = tx.objectStore("remoteMappings").index("localId");
-    const req = index.get(localId);
-    req.onsuccess = () => resolve((req.result as RemoteMapping | undefined) ?? null);
+    const req = index.getAll(localId);
+    req.onsuccess = () => {
+      const records = (req.result as RemoteMapping[] | undefined) ?? [];
+      const match = records.find(
+        (m) =>
+          (!workspaceId || m.workspaceId === workspaceId) &&
+          (!entityType || m.entityType === entityType),
+      );
+      resolve(match ?? null);
+    };
     req.onerror = () => reject(req.error);
   });
 }
@@ -109,8 +119,8 @@ export async function getRemoteMapping(
  * Used when pulling changes from the cloud to apply them locally.
  */
 export async function getLocalIdByRemoteId(
-  _workspaceId: string,
-  _entityType: SyncEntityType,
+  workspaceId: string,
+  entityType: SyncEntityType,
   remoteId: string,
 ): Promise<string | null> {
   const db = await openLocalWorkspaceDatabase();
@@ -118,10 +128,15 @@ export async function getLocalIdByRemoteId(
   return new Promise((resolve, reject) => {
     const tx = db.transaction("remoteMappings", "readonly");
     const index = tx.objectStore("remoteMappings").index("remoteId");
-    const req = index.get(remoteId);
+    const req = index.getAll(remoteId);
     req.onsuccess = () => {
-      const mapping = req.result as RemoteMapping | undefined;
-      resolve(mapping?.localId ?? null);
+      const records = (req.result as RemoteMapping[] | undefined) ?? [];
+      const match = records.find(
+        (m) =>
+          (!workspaceId || m.workspaceId === workspaceId) &&
+          (!entityType || m.entityType === entityType),
+      );
+      resolve(match?.localId ?? null);
     };
     req.onerror = () => reject(req.error);
   });
@@ -157,8 +172,8 @@ export async function listRemoteMappings(
  * confirmed the deletion (before writing the tombstone).
  */
 export async function deleteRemoteMapping(
-  _workspaceId: string,
-  _entityType: SyncEntityType,
+  workspaceId: string,
+  entityType: SyncEntityType,
   localId: string,
 ): Promise<void> {
   const db = await openLocalWorkspaceDatabase();
@@ -167,10 +182,15 @@ export async function deleteRemoteMapping(
     const tx = db.transaction("remoteMappings", "readwrite");
     const store = tx.objectStore("remoteMappings");
     const index = store.index("localId");
-    const getReq = index.get(localId);
+    const getReq = index.getAll(localId);
 
     getReq.onsuccess = () => {
-      const mapping = getReq.result as RemoteMapping | undefined;
+      const records = (getReq.result as RemoteMapping[] | undefined) ?? [];
+      const mapping = records.find(
+        (m) =>
+          (!workspaceId || m.workspaceId === workspaceId) &&
+          (!entityType || m.entityType === entityType),
+      );
       if (!mapping) { resolve(); return; }
       const delReq = store.delete(mapping.id);
       delReq.onsuccess = () => resolve();

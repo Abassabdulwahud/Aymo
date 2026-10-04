@@ -78,6 +78,8 @@ import type {
 } from "./syncTypes";
 
 
+import { AttachmentRepository } from "./attachmentRepository";
+
 // ─── Retry Policy ─────────────────────────────────────────────────────────────
 
 const MAX_RETRIES = 5;
@@ -354,6 +356,11 @@ export class SyncService {
       };
     }
 
+    while (this._processingQueue) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    this._processingQueue = true;
     this._setStatus("syncing");
     let pushedCount = 0;
     let pulledCount = 0;
@@ -368,8 +375,8 @@ export class SyncService {
 
       for (const record of awaitingPush) {
         try {
-          await this._processRecord(this.adapter, record);
-          pushedCount++;
+          const ok = await this._processRecord(this.adapter, record);
+          if (ok) pushedCount++;
         } catch (err) {
           this._log("Error pushing record during manual sync:", err);
           // Preserve local data & record failure, continue with remaining records
@@ -421,6 +428,8 @@ export class SyncService {
         pushedCount,
         pulledCount,
       };
+    } finally {
+      this._processingQueue = false;
     }
   }
 
@@ -576,11 +585,11 @@ export class SyncService {
   private async _processRecord(
     adapter: CloudSyncAdapter,
     record: SyncQueueRecord,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (record.retryCount >= MAX_RETRIES) {
       this._log(`Giving up on record ${record.id} after ${record.retryCount} retries`);
       await markOperationConflict(record.id);
-      return;
+      return false;
     }
 
     await markOperationProcessing(record.id);
@@ -597,15 +606,40 @@ export class SyncService {
       );
 
       await markOperationSynced(record.id);
+
+      if (record.entityType === "attachment") {
+        try {
+          await AttachmentRepository.updateAttachment(record.localId, record.workspaceId, {
+            syncState: "SYNCED",
+            remoteId,
+          });
+        } catch {
+          /* ignore if record removed */
+        }
+      }
+
       this._log(`Synced ${record.entityType} ${record.localId} → ${remoteId}`);
+      return true;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       this._log(`Failed to sync record ${record.id}:`, errorMessage);
       await markOperationFailed(record.id, errorMessage);
 
+      if (record.entityType === "attachment") {
+        try {
+          await AttachmentRepository.updateAttachment(record.localId, record.workspaceId, {
+            syncState: "SYNC_FAILED",
+            lastSyncError: errorMessage,
+          });
+        } catch {
+          /* ignore if record removed */
+        }
+      }
+
       // Schedule a retry with exponential backoff.
       const delay = backoffDelay(record.retryCount);
       this._scheduleRetry(record.id, delay);
+      return false;
     }
   }
 

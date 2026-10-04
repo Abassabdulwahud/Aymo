@@ -223,18 +223,18 @@ async def sync_push(
                 await note_repo.soft_delete(local_id, user_id=user_id)
                 logger.info(f"[SYNC-REPO] Soft-deleted note {local_id}")
 
-    elif entity_type == "file":
-        if operation in ("create", "update"):
+    elif entity_type in ("file", "attachment"):
+        if operation in ("create", "update", "rename"):
             file_doc = FileDoc(
                 id=local_id,
-                note_id=payload.get("noteId", ""),
+                note_id=payload.get("noteId", payload.get("note_id", "")),
                 user_id=user_id,
-                file_name=payload.get("fileName", "attachment"),
-                file_type=payload.get("fileType", "image"),
-                file_url=payload.get("fileUrl", ""),
-                file_size=payload.get("fileSize", 0),
-                storage_key=payload.get("storageKey"),
-                extraction_status=payload.get("extractionStatus", "queued"),
+                file_name=payload.get("name", payload.get("file_name", payload.get("fileName", "attachment"))),
+                file_type=payload.get("kind", payload.get("file_type", payload.get("fileType", "image"))),
+                file_url=payload.get("remoteUrl", payload.get("file_url", payload.get("fileUrl", ""))),
+                file_size=payload.get("sizeBytes", payload.get("file_size", payload.get("fileSize", 0))),
+                storage_key=payload.get("storageKey", payload.get("storage_key")),
+                extraction_status=payload.get("extractionStatus", "completed"),
             )
             await file_repo.create_or_replace(file_doc, user_id=user_id)
         elif operation == "delete":

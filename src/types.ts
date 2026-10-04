@@ -101,7 +101,9 @@ export type SyncState =
   | "PENDING"
   | "SYNCING"
   | "SYNCED"
-  | "FAILED";
+  | "FAILED"
+  | "SYNC_PENDING"
+  | "SYNC_FAILED";
 
 export type LocalErrorCode =
   | "MISSING_BLOB"

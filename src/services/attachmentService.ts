@@ -9,6 +9,7 @@ import {
   requestToPromise,
   generateUuid,
 } from "./localWorkspaceDatabase";
+import { enqueueSyncOperation } from "./syncQueue";
 
 // ─── Formatters & Mappers ─────────────────────────────────────────────────────
 
@@ -167,6 +168,38 @@ export class AttachmentService {
       throw err;
     }
 
+    try {
+      await enqueueSyncOperation({
+        workspaceId: wsId,
+        entityType: "attachment",
+        operation: "create",
+        localId: committed.id,
+        payload: {
+          id: committed.id,
+          noteId: committed.noteId,
+          workspaceId: committed.workspaceId,
+          name: committed.name,
+          mimeType: committed.mimeType,
+          sizeBytes: committed.sizeBytes,
+          kind: committed.kind,
+          extension: committed.extension,
+          createdAt: committed.createdAt,
+          updatedAt: committed.updatedAt,
+        },
+      });
+      await AttachmentRepository.updateAttachment(committed.id, wsId, { syncState: "SYNC_PENDING" });
+      committed.syncState = "SYNC_PENDING";
+    } catch (enqueueErr) {
+      console.warn("[AYMO-ATT] Failed to enqueue sync operation:", enqueueErr);
+      const errMsg = enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr);
+      await AttachmentRepository.updateAttachment(committed.id, wsId, {
+        syncState: "SYNC_FAILED",
+        lastSyncError: errMsg,
+      });
+      committed.syncState = "SYNC_FAILED";
+      committed.lastSyncError = errMsg;
+    }
+
     if (DEV) {
       console.debug(
         `[AYMO-ATT] createAttachment DONE id=${committed.id} localState=${committed.localState} syncState=${committed.syncState}`,
@@ -208,7 +241,7 @@ export class AttachmentService {
       localState: "LOCAL_READY",
       localError: null,
       localErrorCode: null,
-      syncState: "NOT_QUEUED",
+      syncState: "SYNC_PENDING",
       retryCount: 0,
       nextRetryAt: null,
       lastSyncError: null,
@@ -223,6 +256,37 @@ export class AttachmentService {
     await runTransaction("attachments", "readwrite", async (tx) => {
       tx.objectStore("attachments").put(record);
     });
+
+    try {
+      await enqueueSyncOperation({
+        workspaceId: wsId,
+        entityType: "attachment",
+        operation: "create",
+        localId: record.id,
+        payload: {
+          id: record.id,
+          noteId: record.noteId,
+          workspaceId: record.workspaceId,
+          name: record.name,
+          mimeType: record.mimeType,
+          sizeBytes: record.sizeBytes,
+          kind: record.kind,
+          extension: record.extension,
+          remoteUrl: record.remoteUrl,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        },
+      });
+    } catch (enqueueErr) {
+      console.warn("[AYMO-ATT] Failed to enqueue sync operation:", enqueueErr);
+      const errMsg = enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr);
+      await AttachmentRepository.updateAttachment(record.id, wsId, {
+        syncState: "SYNC_FAILED",
+        lastSyncError: errMsg,
+      });
+      record.syncState = "SYNC_FAILED";
+      record.lastSyncError = errMsg;
+    }
 
     notifyAttachmentListeners({
       action: "created",
@@ -252,6 +316,18 @@ export class AttachmentService {
 
     await AttachmentRepository.deleteLocalAttachmentAtomic(wsId, attachmentId);
 
+    try {
+      await enqueueSyncOperation({
+        workspaceId: wsId,
+        entityType: "attachment",
+        operation: "delete",
+        localId: attachmentId,
+        payload: { id: attachmentId, workspaceId: wsId },
+      });
+    } catch (enqueueErr) {
+      console.warn("[AYMO-ATT] Failed to enqueue sync operation:", enqueueErr);
+    }
+
     if (DEV) {
       console.debug(`[AYMO-ATT] deleteAttachment DONE id=${attachmentId}`);
     }
@@ -272,11 +348,34 @@ export class AttachmentService {
     workspaceId?: string,
   ): Promise<AttachmentRecord> {
     const wsId = workspaceId || (await getActiveWorkspaceId()) || "";
-    const updated = await AttachmentRepository.updateAttachment(
+    let updated = await AttachmentRepository.updateAttachment(
       attachmentId,
       wsId,
-      { name },
+      { name, syncState: "SYNC_PENDING" },
     );
+
+    try {
+      await enqueueSyncOperation({
+        workspaceId: wsId,
+        entityType: "attachment",
+        operation: "rename",
+        localId: attachmentId,
+        payload: {
+          id: attachmentId,
+          name,
+          noteId: updated.noteId,
+          workspaceId: wsId,
+          updatedAt: updated.updatedAt,
+        },
+      });
+    } catch (enqueueErr) {
+      console.warn("[AYMO-ATT] Failed to enqueue sync operation:", enqueueErr);
+      const errMsg = enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr);
+      updated = await AttachmentRepository.updateAttachment(attachmentId, wsId, {
+        syncState: "SYNC_FAILED",
+        lastSyncError: errMsg,
+      });
+    }
 
     notifyAttachmentListeners({
       action: "updated",
