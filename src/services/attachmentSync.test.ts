@@ -15,6 +15,7 @@ vi.mock("./connectivityService", async (importOriginal) => {
 });
 
 import { AttachmentService } from "./attachmentService";
+import { AttachmentRepository } from "./attachmentRepository";
 import { SyncService } from "./syncService";
 import { getPendingOperations, getAllQueueRecords } from "./syncQueue";
 import { getRemoteMapping } from "./remoteMapping";
@@ -227,5 +228,207 @@ describe("Phase 4A: Local-to-Cloud Synchronization Foundation Suite", () => {
     // Scoped query for WS1 with WS2's ID should return null
     const crossCheck = await getRM(WORKSPACE_1, "attachment", "non-existent-or-other");
     expect(crossCheck).toBeNull();
+  });
+
+  // ── P2 Durable Queue Recovery Test Suite (Tests A - H) ──────────────────────
+
+  // Test A — Queue enqueue failure recovery
+  it("P2-A. reconstructs missing CREATE queue record when initial enqueueSyncOperation fails", async () => {
+    const file = new File(["recovery test"], "rec_test.txt", { type: "text/plain" });
+    const record = await AttachmentService.createAttachment(file, "note-p2-a", WORKSPACE_1);
+
+    // Simulate initial enqueueSyncOperation failure by clearing syncQueue
+    const { runTransaction } = await import("./localWorkspaceDatabase");
+    await runTransaction("syncQueue", "readwrite", async (tx) => {
+      tx.objectStore("syncQueue").clear();
+    });
+    await AttachmentRepository.updateAttachment(record.id, WORKSPACE_1, {
+      syncState: "SYNC_FAILED",
+      lastSyncError: "Simulated queue write error",
+    });
+
+    // Verify initial failure state
+    let att = await AttachmentService.getAttachment(record.id, WORKSPACE_1);
+    expect(att?.syncState).toBe("SYNC_FAILED");
+    let pendingOps = await getPendingOperations(WORKSPACE_1, 50);
+    expect(pendingOps.filter((o) => o.localId === record.id)).toHaveLength(0);
+
+    // Run recovery pass
+    const recoveredCount = await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_1);
+    expect(recoveredCount).toBe(1);
+
+    // Verify queue record reconstructed
+    pendingOps = await getPendingOperations(WORKSPACE_1, 50);
+    const reconstructed = pendingOps.find((o) => o.localId === record.id);
+    expect(reconstructed).toBeDefined();
+    expect(reconstructed?.operation).toBe("create");
+    expect(reconstructed?.entityType).toBe("attachment");
+
+    // Verify attachment state updated to SYNC_PENDING
+    att = await AttachmentService.getAttachment(record.id, WORKSPACE_1);
+    expect(att?.syncState).toBe("SYNC_PENDING");
+    expect(att?.lastSyncError).toBeNull();
+  });
+
+  // Test B — Recovery survives reinitialization / refresh
+  it("P2-B. recovers missing queue entries from durable IDB state upon SyncService initialization", async () => {
+    const file = new File(["reinit test"], "reinit.txt", { type: "text/plain" });
+    const record = await AttachmentService.createAttachment(file, "note-p2-b", WORKSPACE_1);
+
+    // Clear syncQueue to simulate missing queue entry
+    const { runTransaction } = await import("./localWorkspaceDatabase");
+    await runTransaction("syncQueue", "readwrite", async (tx) => {
+      tx.objectStore("syncQueue").clear();
+    });
+    await AttachmentRepository.updateAttachment(record.id, WORKSPACE_1, {
+      syncState: "SYNC_FAILED",
+      lastSyncError: "Simulated crash",
+    });
+
+    // Reinitialize SyncService (simulating restart)
+    const syncService = SyncService.getInstance();
+    await syncService.initialize(WORKSPACE_1);
+
+    const pendingOps = await getPendingOperations(WORKSPACE_1, 50);
+    const found = pendingOps.find((o) => o.localId === record.id);
+    expect(found).toBeDefined();
+    expect(found?.operation).toBe("create");
+  });
+
+  // Test C — Idempotent recovery
+  it("P2-C. operates idempotently when executed multiple times without duplicating queue entries", async () => {
+    const file = new File(["idempotent test"], "idempotent.txt", { type: "text/plain" });
+    const record = await AttachmentService.createAttachment(file, "note-p2-c", WORKSPACE_1);
+
+    const { runTransaction } = await import("./localWorkspaceDatabase");
+    await runTransaction("syncQueue", "readwrite", async (tx) => {
+      tx.objectStore("syncQueue").clear();
+    });
+    await AttachmentRepository.updateAttachment(record.id, WORKSPACE_1, {
+      syncState: "SYNC_FAILED",
+    });
+
+    // Run recovery 3 times
+    await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_1);
+    await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_1);
+    await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_1);
+
+    const allRecords = await getAllQueueRecords(WORKSPACE_1);
+    const matchingOps = allRecords.filter((o) => o.localId === record.id);
+    expect(matchingOps).toHaveLength(1);
+  });
+
+  // Test D — Existing queue is not duplicated
+  it("P2-D. ignores attachments that already have active queue entries", async () => {
+    const file = new File(["active queue test"], "active.txt", { type: "text/plain" });
+    const record = await AttachmentService.createAttachment(file, "note-p2-d", WORKSPACE_1);
+
+    // Run recovery while valid queue entry already exists
+    const count = await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_1);
+    expect(count).toBe(0);
+
+    const allRecords = await getAllQueueRecords(WORKSPACE_1);
+    const matchingOps = allRecords.filter((o) => o.localId === record.id);
+    expect(matchingOps).toHaveLength(1);
+  });
+
+  // Test E — Already synced attachment is ignored
+  it("P2-E. ignores attachments that are already remotely mapped or SYNCED", async () => {
+    const file = new File(["synced test"], "synced.txt", { type: "text/plain" });
+    const record = await AttachmentService.createAttachment(file, "note-p2-e", WORKSPACE_1);
+
+    const { setRemoteMapping } = await import("./remoteMapping");
+    await setRemoteMapping(WORKSPACE_1, "attachment", record.id, "remote-mongo-e");
+    await AttachmentRepository.updateAttachment(record.id, WORKSPACE_1, {
+      syncState: "SYNCED",
+      remoteId: "remote-mongo-e",
+    });
+
+    // Clear queue so only remote mapping exists
+    const { runTransaction } = await import("./localWorkspaceDatabase");
+    await runTransaction("syncQueue", "readwrite", async (tx) => {
+      tx.objectStore("syncQueue").clear();
+    });
+
+    const count = await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_1);
+    expect(count).toBe(0);
+  });
+
+  // Test F — Deleted attachment is not resurrected
+  it("P2-F. does not recreate queue records for deleted or tombstoned attachments", async () => {
+    const file = new File(["deleted test"], "del.txt", { type: "text/plain" });
+    const record = await AttachmentService.createAttachment(file, "note-p2-f", WORKSPACE_1);
+
+    // Delete attachment atomically (deletes metadata + Blob + creates tombstone)
+    await AttachmentService.deleteAttachment(record.id, WORKSPACE_1);
+
+    // Clear queue to simulate lost queue
+    const { runTransaction } = await import("./localWorkspaceDatabase");
+    await runTransaction("syncQueue", "readwrite", async (tx) => {
+      tx.objectStore("syncQueue").clear();
+    });
+
+    const count = await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_1);
+    expect(count).toBe(0);
+  });
+
+  // Test G — Workspace isolation
+  it("P2-G. respects workspace isolation during recovery passes", async () => {
+    const file1 = new File(["ws1 file"], "ws1.txt", { type: "text/plain" });
+    const file2 = new File(["ws2 file"], "ws2.txt", { type: "text/plain" });
+
+    const rec1 = await AttachmentService.createAttachment(file1, "note-ws1", WORKSPACE_1);
+    const rec2 = await AttachmentService.createAttachment(file2, "note-ws2", WORKSPACE_2);
+
+    // Clear queues
+    const { runTransaction } = await import("./localWorkspaceDatabase");
+    await runTransaction("syncQueue", "readwrite", async (tx) => {
+      tx.objectStore("syncQueue").clear();
+    });
+
+    await AttachmentRepository.updateAttachment(rec1.id, WORKSPACE_1, { syncState: "SYNC_FAILED" });
+    await AttachmentRepository.updateAttachment(rec2.id, WORKSPACE_2, { syncState: "SYNC_FAILED" });
+
+    // Recover WORKSPACE_1 only
+    const countWs1 = await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_1);
+    expect(countWs1).toBe(1);
+
+    const opsWs1 = await getPendingOperations(WORKSPACE_1, 50);
+    const opsWs2 = await getPendingOperations(WORKSPACE_2, 50);
+
+    expect(opsWs1.some((o) => o.localId === rec1.id)).toBe(true);
+    expect(opsWs1.some((o) => o.localId === rec2.id)).toBe(false);
+    expect(opsWs2.some((o) => o.localId === rec2.id)).toBe(false);
+  });
+
+  // Test H — Normal sync after recovery
+  it("P2-H. successfully pushes reconstructed queue records to cloud through normal SyncService pipeline", async () => {
+    const file = new File(["full sync test"], "full_sync.txt", { type: "text/plain" });
+    const record = await AttachmentService.createAttachment(file, "note-p2-h", WORKSPACE_1);
+
+    // Clear queue to simulate enqueue failure
+    const { runTransaction } = await import("./localWorkspaceDatabase");
+    await runTransaction("syncQueue", "readwrite", async (tx) => {
+      tx.objectStore("syncQueue").clear();
+    });
+    await AttachmentRepository.updateAttachment(record.id, WORKSPACE_1, { syncState: "SYNC_FAILED" });
+
+    const mockAdapter: any = {
+      provider: "mongodb",
+      pushOperation: async (rec: any) => ({ remoteId: `mongo-remote-${rec.localId}` }),
+      fetchChanges: async () => [],
+    };
+
+    const syncService = SyncService.getInstance();
+    await syncService.initialize(WORKSPACE_1);
+    syncService.registerAdapter(mockAdapter);
+
+    // Perform sync (runs recovery + queue push)
+    const result = await syncService.performSync();
+    expect(result.success).toBe(true);
+
+    const att = await AttachmentService.getAttachment(record.id, WORKSPACE_1);
+    expect(att?.syncState).toBe("SYNCED");
+    expect(att?.remoteId).toBe(`mongo-remote-${record.id}`);
   });
 });

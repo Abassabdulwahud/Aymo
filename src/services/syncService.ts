@@ -141,6 +141,13 @@ export class SyncService {
       this._log(`Recovered ${recovered} stuck-in-processing operation(s) from previous session.`);
     }
 
+    // ── Task 6: Queue Reconstruction Recovery ──────────────────────────────
+    // Reconstruct missing syncQueue records for local attachments whose initial enqueue failed.
+    const missingQueueRecovered = await AttachmentRepository.reconcileMissingQueueEntries(workspaceId);
+    if (missingQueueRecovered > 0) {
+      this._log(`Reconstructed ${missingQueueRecovered} missing attachment queue entry(ies).`);
+    }
+
     // Rehydrate last known state from IndexedDB.
     const savedState = await getSyncState(workspaceId);
     if (savedState) {
@@ -366,6 +373,9 @@ export class SyncService {
     let pulledCount = 0;
 
     try {
+      // 0. Reconstruct missing attachment queue operations
+      await AttachmentRepository.reconcileMissingQueueEntries(this.workspaceId);
+
       // 1. Reset failed ops and push all pending local operations
       await resetFailedOperations(this.workspaceId);
       const pendingRecords = await getAllQueueRecords(this.workspaceId);
@@ -543,6 +553,8 @@ export class SyncService {
       if (compacted > 0) {
         this._log(`Compacted ${compacted} redundant update record(s) before sync pass.`);
       }
+
+      await AttachmentRepository.reconcileMissingQueueEntries(workspaceId);
 
       const records = await getPendingOperations(workspaceId, 10 /* batch size */);
 

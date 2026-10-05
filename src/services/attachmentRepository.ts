@@ -9,6 +9,8 @@ import {
   requestToPromise,
   generateUuid,
 } from "./localWorkspaceDatabase";
+import { getRemoteMapping } from "./remoteMapping";
+import { getAllQueueRecords, enqueueSyncOperation } from "./syncQueue";
 
 const DEV = typeof import.meta !== "undefined" && (import.meta as any).env?.DEV;
 
@@ -403,5 +405,86 @@ export class AttachmentRepository {
       store.put(updated);
       return updated;
     });
+  }
+
+  /**
+   * Scans IndexedDB for local attachments in a workspace that require cloud sync
+   * but lack a corresponding active syncQueue record (e.g. initial enqueueSyncOperation failed).
+   * Reconstructs the missing "create" syncQueue record safely and idempotently.
+   */
+  static async reconcileMissingQueueEntries(workspaceId: string): Promise<number> {
+    // 1. Fetch all local attachments for this workspace
+    const allAttachments = await runTransaction("attachments", "readonly", async (tx) => {
+      const store = tx.objectStore("attachments");
+      const index = store.index("workspaceId");
+      return await requestToPromise<AttachmentRecord[]>(index.getAll(workspaceId));
+    });
+
+    if (allAttachments.length === 0) return 0;
+
+    // 2. Fetch all queue records for this workspace
+    const queueRecords = await getAllQueueRecords(workspaceId);
+    const activeQueueLocalIds = new Set(
+      queueRecords
+        .filter(
+          (r) =>
+            r.entityType === "attachment" &&
+            (r.status === "pending" || r.status === "processing" || r.status === "failed"),
+        )
+        .map((r) => r.localId),
+    );
+
+    // 3. Fetch all tombstones / deletions for this workspace
+    const tombstones = await runTransaction("attachmentDeletions", "readonly", async (tx) => {
+      const store = tx.objectStore("attachmentDeletions");
+      const index = store.index("workspaceId");
+      return await requestToPromise<AttachmentDeletionRecord[]>(index.getAll(workspaceId));
+    });
+    const deletedLocalIds = new Set(
+      tombstones.map((t) => t.localAttachmentId),
+    );
+
+    let recoveredCount = 0;
+
+    for (const att of allAttachments) {
+      if (deletedLocalIds.has(att.id)) continue;
+      if (att.syncState === "SYNCED" || !!att.remoteId) continue;
+
+      const existingMapping = await getRemoteMapping(workspaceId, "attachment", att.id);
+      if (existingMapping) continue;
+
+      if (activeQueueLocalIds.has(att.id)) continue;
+
+      try {
+        await enqueueSyncOperation({
+          workspaceId,
+          entityType: "attachment",
+          operation: "create",
+          localId: att.id,
+          payload: {
+            id: att.id,
+            noteId: att.noteId,
+            workspaceId: att.workspaceId,
+            name: att.name,
+            mimeType: att.mimeType,
+            sizeBytes: att.sizeBytes,
+            kind: att.kind,
+            extension: att.extension,
+            remoteUrl: att.remoteUrl,
+            createdAt: att.createdAt,
+            updatedAt: att.updatedAt,
+          },
+        });
+        await this.updateAttachment(att.id, workspaceId, {
+          syncState: "SYNC_PENDING",
+          lastSyncError: null,
+        });
+        recoveredCount++;
+      } catch (err) {
+        console.warn(`[AYMO-REPO] Failed to reconstruct queue entry for attachment ${att.id}:`, err);
+      }
+    }
+
+    return recoveredCount;
   }
 }
