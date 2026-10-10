@@ -19,7 +19,7 @@ Startup validation:
 """
 import io
 import logging
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import cloudinary
 import cloudinary.api
@@ -41,6 +41,187 @@ _RESOURCE_TYPE_MAP: dict[FileType, str] = {
     FileType.DOCUMENT: "raw",
     FileType.LINK:     "raw",
 }
+
+# ── Phase 4B.1 Signed Upload & Deletion Policy ────────────────────────────────
+
+MAX_SIZE_IMAGE_AUDIO = 25 * 1024 * 1024    # 25 MB
+MAX_SIZE_VIDEO_PDF   = 100 * 1024 * 1024   # 100 MB
+MAX_SIZE_DOCUMENT    = 25 * 1024 * 1024    # 25 MB
+
+ALLOWED_MIME_TYPES: dict[str, tuple[str, int]] = {
+    # Images -> resource_type: image, max: 25MB
+    "image/jpeg": ("image", MAX_SIZE_IMAGE_AUDIO),
+    "image/jpg": ("image", MAX_SIZE_IMAGE_AUDIO),
+    "image/png": ("image", MAX_SIZE_IMAGE_AUDIO),
+    "image/gif": ("image", MAX_SIZE_IMAGE_AUDIO),
+    "image/webp": ("image", MAX_SIZE_IMAGE_AUDIO),
+    "image/svg+xml": ("image", MAX_SIZE_IMAGE_AUDIO),
+    "image/bmp": ("image", MAX_SIZE_IMAGE_AUDIO),
+
+    # Video -> resource_type: video, max: 100MB
+    "video/mp4": ("video", MAX_SIZE_VIDEO_PDF),
+    "video/webm": ("video", MAX_SIZE_VIDEO_PDF),
+    "video/quicktime": ("video", MAX_SIZE_VIDEO_PDF),
+    "video/x-msvideo": ("video", MAX_SIZE_VIDEO_PDF),
+    "video/x-matroska": ("video", MAX_SIZE_VIDEO_PDF),
+
+    # Audio -> resource_type: video (Cloudinary processes audio under video pipeline), max: 25MB
+    "audio/mpeg": ("video", MAX_SIZE_IMAGE_AUDIO),
+    "audio/mp3": ("video", MAX_SIZE_IMAGE_AUDIO),
+    "audio/wav": ("video", MAX_SIZE_IMAGE_AUDIO),
+    "audio/x-wav": ("video", MAX_SIZE_IMAGE_AUDIO),
+    "audio/aac": ("video", MAX_SIZE_IMAGE_AUDIO),
+    "audio/ogg": ("video", MAX_SIZE_IMAGE_AUDIO),
+    "audio/flac": ("video", MAX_SIZE_IMAGE_AUDIO),
+    "audio/mp4": ("video", MAX_SIZE_IMAGE_AUDIO),
+    "audio/x-m4a": ("video", MAX_SIZE_IMAGE_AUDIO),
+
+    # PDF -> resource_type: raw, max: 100MB
+    "application/pdf": ("raw", MAX_SIZE_VIDEO_PDF),
+
+    # Documents -> resource_type: raw, max: 25MB
+    "application/msword": ("raw", MAX_SIZE_DOCUMENT),
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ("raw", MAX_SIZE_DOCUMENT),
+    "application/vnd.ms-excel": ("raw", MAX_SIZE_DOCUMENT),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ("raw", MAX_SIZE_DOCUMENT),
+    "application/vnd.ms-powerpoint": ("raw", MAX_SIZE_DOCUMENT),
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ("raw", MAX_SIZE_DOCUMENT),
+    "text/plain": ("raw", MAX_SIZE_DOCUMENT),
+    "text/csv": ("raw", MAX_SIZE_DOCUMENT),
+}
+
+FORBIDDEN_MIME_PREFIXES = (
+    "application/x-msdownload",
+    "application/x-executable",
+    "application/x-sh",
+    "application/x-bat",
+)
+
+
+def validate_mime_and_size(mime_type: str, size_bytes: int) -> tuple[str, int]:
+    """
+    Validates client mime_type and size_bytes against server security policy.
+    Returns (resource_type, max_allowed_bytes).
+    Raises ValueError on validation failure.
+    """
+    if not mime_type or not isinstance(mime_type, str):
+        raise ValueError("mimeType is required.")
+
+    clean_mime = mime_type.strip().lower()
+
+    for forbidden in FORBIDDEN_MIME_PREFIXES:
+        if clean_mime.startswith(forbidden):
+            raise ValueError(f"Forbidden file type: {clean_mime}")
+
+    if clean_mime not in ALLOWED_MIME_TYPES:
+        raise ValueError(f"Unsupported MIME type: {clean_mime}")
+
+    resource_type, max_bytes = ALLOWED_MIME_TYPES[clean_mime]
+
+    if not isinstance(size_bytes, int) or size_bytes <= 0:
+        raise ValueError("sizeBytes must be a positive integer greater than 0.")
+
+    if size_bytes > max_bytes:
+        max_mb = max_bytes // (1024 * 1024)
+        raise ValueError(f"File size exceeds maximum allowed limit of {max_mb} MB for this type.")
+
+    return resource_type, max_bytes
+
+
+def derive_attachment_cloudinary_identity(workspace_id: str, attachment_id: str) -> tuple[str, str]:
+    """
+    Derives server-controlled folder and public_id for sync attachment uploads.
+    Namespace: {folder}/workspaces/{workspaceId}/{attachmentId}
+    """
+    settings = get_settings()
+    base_folder = settings.cloudinary_folder or "aymo"
+    folder = f"{base_folder}/workspaces/{workspace_id}"
+    public_id = f"{folder}/{attachment_id}"
+    return folder, public_id
+
+
+def generate_signed_upload_params(
+    workspace_id: str,
+    attachment_id: str,
+    mime_type: str,
+    size_bytes: int,
+) -> dict[str, Any]:
+    """
+    Validates MIME type & size, derives folder, public_id & resource_type,
+    generates Cloudinary signature and returns upload parameters.
+    """
+    from datetime import datetime, timezone
+    import cloudinary.utils
+
+    resource_type, _ = validate_mime_and_size(mime_type, size_bytes)
+    folder, public_id = derive_attachment_cloudinary_identity(workspace_id, attachment_id)
+
+    settings = get_settings()
+    cloud_name = settings.cloudinary_cloud_name or "aymo"
+    api_key = settings.cloudinary_api_key or ""
+    api_secret = settings.cloudinary_api_secret or ""
+
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+
+    params_to_sign = {
+        "folder": folder,
+        "overwrite": "true",
+        "public_id": public_id,
+        "timestamp": str(timestamp),
+        "unique_filename": "false",
+    }
+
+    try:
+        signature = cloudinary.utils.api_sign_request(params_to_sign, api_secret)
+    except Exception as exc:
+        logger.error(f"[CLOUDINARY-SIGN] Failed to calculate signature: {exc}")
+        raise RuntimeError("Cloudinary signature generation failed.") from exc
+
+    upload_url = f"https://api.cloudinary.com/v1_1/{cloud_name}/{resource_type}/upload"
+
+    return {
+        "cloudName": cloud_name,
+        "apiKey": api_key,
+        "timestamp": timestamp,
+        "publicId": public_id,
+        "folder": folder,
+        "resourceType": resource_type,
+        "signature": signature,
+        "uploadUrl": upload_url,
+    }
+
+
+def delete_cloudinary_attachment(public_id: str, resource_type: Optional[str] = None) -> bool:
+    """
+    Deletes an asset from Cloudinary by public_id.
+    Treats both 'ok' and 'not found' as successful (idempotent).
+    Returns True if deletion succeeded or asset was already missing.
+    Raises RuntimeError on Cloudinary API failure.
+    """
+    import cloudinary.uploader
+    import cloudinary.exceptions
+
+    rtypes = [resource_type] if resource_type in ("image", "video", "raw") else ["image", "video", "raw"]
+    last_exc = None
+
+    for rtype in rtypes:
+        try:
+            res = cloudinary.uploader.destroy(public_id, resource_type=rtype)
+            res_val = res.get("result") if isinstance(res, dict) else ""
+            if res_val in ("ok", "not found"):
+                logger.info(f"[CLOUDINARY-DELETE] Destroyed public_id={public_id} (rtype={rtype}, result={res_val})")
+                return True
+        except cloudinary.exceptions.NotFound:
+            return True
+        except Exception as exc:
+            logger.warning(f"[CLOUDINARY-DELETE] Error destroying public_id={public_id} (rtype={rtype}): {exc}")
+            last_exc = exc
+
+    if last_exc is not None:
+        raise RuntimeError(f"Cloudinary deletion failed: {last_exc}") from last_exc
+
+    return True
+
 
 
 class CloudinaryStorageProvider(StorageProvider):

@@ -25,6 +25,11 @@ from ..repositories.mongo_repository import (
     AnnotationMongoRepository,
     SyncMongoRepository,
 )
+from ..storage.cloudinary_provider import (
+    generate_signed_upload_params,
+    delete_cloudinary_attachment,
+    derive_attachment_cloudinary_identity,
+)
 
 logger = logging.getLogger("aymo.sync_route")
 router = APIRouter(prefix="/api/protected/sync", tags=["sync"])
@@ -87,6 +92,38 @@ class ConflictResolutionResponse(BaseModel):
 class SyncStatusResponse(BaseModel):
     available: bool
     status: str
+
+
+class CloudinaryAuthRequest(BaseModel):
+    workspaceId: str
+    attachmentId: str
+    mimeType: str
+    sizeBytes: int
+
+
+class CloudinaryAuthResponse(BaseModel):
+    cloudName: str
+    apiKey: str
+    timestamp: int
+    publicId: str
+    folder: str
+    resourceType: str
+    signature: str
+    uploadUrl: str
+
+
+class CloudinaryDeleteRequest(BaseModel):
+    workspaceId: str
+    attachmentId: str
+
+    class Config:
+        extra = "ignore"
+
+
+class CloudinaryDeleteResponse(BaseModel):
+    status: str
+    attachmentId: str
+    cloudinaryPublicId: str
 
 
 # ─── Internal Helper: Get DB & Repositories ───────────────────────────────────
@@ -370,3 +407,115 @@ async def sync_status():
         available=available,
         status="active" if available else "offline"
     )
+
+
+@router.post("/cloudinary-auth", response_model=CloudinaryAuthResponse)
+async def cloudinary_auth(
+    body: CloudinaryAuthRequest,
+    current_user: AuthenticatedUser = Depends(get_current_mongo_user),
+):
+    """
+    Generates scoped Cloudinary authorization parameters for direct browser upload.
+    Enforces JWT auth, workspace access, UUID validation, MIME allowlist, and file size limits.
+    """
+    # 1. Validate attachmentId UUID format
+    try:
+        val_uuid = uuid.UUID(body.attachmentId)
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="attachmentId must be a valid UUID string."
+        )
+
+    # 2. Authorize workspace access
+    await require_workspace_access(body.workspaceId, current_user)
+
+    # 3. Generate signature & server-derived parameters via storage provider helper
+    try:
+        auth_data = generate_signed_upload_params(
+            workspace_id=body.workspaceId,
+            attachment_id=str(val_uuid),
+            mime_type=body.mimeType,
+            size_bytes=body.sizeBytes,
+        )
+        return CloudinaryAuthResponse(**auth_data)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc)
+        )
+    except Exception as exc:
+        logger.error(f"[CLOUDINARY-AUTH] Signature error: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not generate upload signature."
+        )
+
+
+@router.post("/cloudinary-delete", response_model=CloudinaryDeleteResponse)
+async def cloudinary_delete(
+    body: CloudinaryDeleteRequest,
+    current_user: AuthenticatedUser = Depends(get_current_mongo_user),
+):
+    """
+    Deletes an attachment asset from Cloudinary and purges metadata from MongoDB Atlas.
+    Requires JWT auth and workspace authorization.
+    Server derives the Cloudinary public_id strictly from workspaceId + attachmentId.
+    Client input cannot select or override the Cloudinary public_id or resource_type.
+    Idempotent: treating Cloudinary 'ok' and 'not found' as success.
+    """
+    # 1. Validate attachmentId UUID format
+    try:
+        val_uuid = uuid.UUID(body.attachmentId)
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="attachmentId must be a valid UUID string."
+        )
+
+    # 2. Authorize workspace access
+    await require_workspace_access(body.workspaceId, current_user)
+
+    # 3. Server-derived Cloudinary public_id (STRICT: client input cannot select target public_id)
+    folder, target_public_id = derive_attachment_cloudinary_identity(
+        workspace_id=body.workspaceId,
+        attachment_id=str(val_uuid)
+    )
+
+    # 4. Check MongoDB metadata for authoritative resource_type if document exists
+    repos = _get_repos()
+    file_repo: FileMongoRepository = repos["file"]
+
+    server_resource_type = None
+    existing_file = await file_repo.get_by_id(body.attachmentId, user_id=current_user.user_id)
+    if existing_file and existing_file.file_type:
+        ft = str(existing_file.file_type).lower()
+        if ft == "image":
+            server_resource_type = "image"
+        elif ft in ("video", "audio"):
+            server_resource_type = "video"
+        elif ft in ("pdf", "document", "link"):
+            server_resource_type = "raw"
+
+    # 5. Destroy asset on Cloudinary using server-derived target_public_id and server_resource_type
+    try:
+        delete_cloudinary_attachment(
+            public_id=target_public_id,
+            resource_type=server_resource_type
+        )
+    except RuntimeError as exc:
+        logger.error(f"[CLOUDINARY-DELETE] Cloudinary error: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Cloudinary deletion failed."
+        )
+
+    # 6. Delete metadata from MongoDB
+    await file_repo.delete(body.attachmentId, user_id=current_user.user_id)
+
+    return CloudinaryDeleteResponse(
+        status="deleted",
+        attachmentId=body.attachmentId,
+        cloudinaryPublicId=target_public_id
+    )
+
