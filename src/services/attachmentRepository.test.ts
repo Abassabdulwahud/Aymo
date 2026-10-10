@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import "fake-indexeddb/auto";
 import {
   AttachmentRepository,
   createAttachmentRecord,
+  deriveCloudinaryResourceType,
 } from "./attachmentRepository";
 import { MigrationManager } from "./migrationManager";
 import {
@@ -12,6 +13,9 @@ import {
   putLocalAttachmentBlob,
   requestToPromise,
 } from "./localWorkspaceDatabase";
+import { getAllQueueRecords } from "./syncQueue";
+import * as syncQueue from "./syncQueue";
+import { AttachmentService } from "./attachmentService";
 import {
   AttachmentRecord,
   AttachmentDeletionRecord,
@@ -623,5 +627,682 @@ describe("Phase 3A: Attachment Subsystem Verification & Hardening Suite", () => 
     await expect(
       AttachmentRepository.getAttachmentBlob(record.id, WORKSPACE_A),
     ).rejects.toThrow();
+  });
+
+  // ─── Phase 4B.2 — Local Attachment Tombstone & Resource-Type Durability ────
+  describe("Phase 4B.2 — Local Attachment Tombstone & Resource-Type Durability", () => {
+    it("B2-A/B2-K: derives correct Cloudinary resource types and retains resourceType in tombstone after local deletion", async () => {
+      // 1. Image
+      const imgRec = createAttachmentRecord({
+        noteId: "note-b2",
+        workspaceId: WORKSPACE_A,
+        name: "test.png",
+        mimeType: "image/png",
+        sizeBytes: 100,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        imgRec,
+        new Blob(["img"], { type: "image/png" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, imgRec.id);
+      const imgTombstone = await AttachmentRepository.getTombstone(WORKSPACE_A, imgRec.id);
+      expect(imgTombstone).toBeDefined();
+      expect(imgTombstone?.resourceType).toBe("image");
+      expect(imgTombstone?.workspaceId).toBe(WORKSPACE_A);
+      expect(imgTombstone?.localAttachmentId).toBe(imgRec.id);
+
+      // Verify metadata & blob are gone locally
+      expect(await AttachmentRepository.getAttachment(imgRec.id, WORKSPACE_A)).toBeNull();
+
+      // 2. Video
+      const vidRec = createAttachmentRecord({
+        noteId: "note-b2",
+        workspaceId: WORKSPACE_A,
+        name: "test.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 200,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        vidRec,
+        new Blob(["vid"], { type: "video/mp4" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, vidRec.id);
+      const vidTombstone = await AttachmentRepository.getTombstone(WORKSPACE_A, vidRec.id);
+      expect(vidTombstone?.resourceType).toBe("video");
+
+      // 3. Audio -> video (Cloudinary requirement)
+      const audRec = createAttachmentRecord({
+        noteId: "note-b2",
+        workspaceId: WORKSPACE_A,
+        name: "test.mp3",
+        mimeType: "audio/mp3",
+        sizeBytes: 150,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        audRec,
+        new Blob(["aud"], { type: "audio/mp3" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, audRec.id);
+      const audTombstone = await AttachmentRepository.getTombstone(WORKSPACE_A, audRec.id);
+      expect(audTombstone?.resourceType).toBe("video");
+
+      // 4. PDF / Document / Raw
+      const pdfRec = createAttachmentRecord({
+        noteId: "note-b2",
+        workspaceId: WORKSPACE_A,
+        name: "doc.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 300,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        pdfRec,
+        new Blob(["pdf"], { type: "application/pdf" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, pdfRec.id);
+      const pdfTombstone = await AttachmentRepository.getTombstone(WORKSPACE_A, pdfRec.id);
+      expect(pdfTombstone?.resourceType).toBe("raw");
+    });
+
+    it("B2-ResourceTypeMapping: deriveCloudinaryResourceType unit mappings", () => {
+      expect(deriveCloudinaryResourceType("image", "image/jpeg")).toBe("image");
+      expect(deriveCloudinaryResourceType("video", "video/mp4")).toBe("video");
+      expect(deriveCloudinaryResourceType("audio", "audio/wav")).toBe("video");
+      expect(deriveCloudinaryResourceType("pdf", "application/pdf")).toBe("raw");
+      expect(deriveCloudinaryResourceType("document", "application/msword")).toBe("raw");
+      expect(deriveCloudinaryResourceType("link", "text/x-uri")).toBe("raw");
+      expect(deriveCloudinaryResourceType(null, "image/gif")).toBe("image");
+      expect(deriveCloudinaryResourceType(null, "video/webm")).toBe("video");
+      expect(deriveCloudinaryResourceType(null, "audio/m4a")).toBe("video");
+      expect(deriveCloudinaryResourceType(null, "text/plain")).toBe("raw");
+    });
+
+    it("B2-C/B2-D: tombstone persists across reads and works offline", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-offline",
+        workspaceId: WORKSPACE_A,
+        name: "clip.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 50,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["clip"], { type: "video/mp4" }),
+      );
+
+      // Perform local deletion (offline environment)
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      // Tombstone is immediately durable in IDB
+      const tombstone = await AttachmentRepository.getTombstone(WORKSPACE_A, record.id);
+      expect(tombstone).toBeDefined();
+      expect(tombstone?.localAttachmentId).toBe(record.id);
+      expect(tombstone?.resourceType).toBe("video");
+      expect(tombstone?.status).toBe("PENDING");
+    });
+
+    it("B2-G: enforces workspace isolation on tombstone creation and lookup", async () => {
+      const recordA = createAttachmentRecord({
+        noteId: "note-wsA",
+        workspaceId: WORKSPACE_A,
+        name: "wsA.png",
+        mimeType: "image/png",
+        sizeBytes: 10,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        recordA,
+        new Blob(["a"], { type: "image/png" }),
+      );
+
+      // Attempt deletion with wrong workspace ID throws isolation error
+      await expect(
+        AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_B, recordA.id),
+      ).rejects.toThrow(/Workspace isolation violation/);
+
+      // Delete with correct workspace ID succeeds
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, recordA.id);
+
+      // Tombstone is accessible in WORKSPACE_A, but not WORKSPACE_B
+      const tombA = await AttachmentRepository.getTombstone(WORKSPACE_A, recordA.id);
+      expect(tombA).toBeDefined();
+
+      const tombB = await AttachmentRepository.getTombstone(WORKSPACE_B, recordA.id);
+      expect(tombB).toBeUndefined();
+    });
+
+    it("B2-L: handles repeated/idempotent local deletion safely", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-idem",
+        workspaceId: WORKSPACE_A,
+        name: "idem.txt",
+        mimeType: "text/plain",
+        sizeBytes: 25,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["idem"], { type: "text/plain" }),
+      );
+
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+      const tomb1 = await AttachmentRepository.getTombstone(WORKSPACE_A, record.id);
+      expect(tomb1).toBeDefined();
+
+      // Repeat deletion call
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+      const tomb2 = await AttachmentRepository.getTombstone(WORKSPACE_A, record.id);
+      expect(tomb2).toBeDefined();
+      expect(tomb2?.id).toBe(tomb1?.id);
+    });
+
+    it("B2-M: tombstone prevents reconcileMissingQueueEntries from resurrecting a deleted attachment", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-resurrection",
+        workspaceId: WORKSPACE_A,
+        name: "deleted.png",
+        mimeType: "image/png",
+        sizeBytes: 40,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["del"], { type: "image/png" }),
+      );
+
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      // Run queue reconstruction pass
+      const recovered = await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_A);
+      expect(recovered).toBe(0);
+    });
+
+    // ─── Phase 4B.2 Correction — Durable Delete Queue Recovery ───────────────
+
+    it("B2-P: after deleteLocalAttachmentAtomic, tombstone exists but no DELETE queue entry", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-b2p",
+        workspaceId: WORKSPACE_A,
+        name: "photo.png",
+        mimeType: "image/png",
+        sizeBytes: 512,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["px"], { type: "image/png" }),
+      );
+
+      // Delete atomically (simulates the case where enqueueSyncOperation subsequently fails)
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      // Tombstone must exist
+      const tombstone = await AttachmentRepository.getTombstone(WORKSPACE_A, record.id);
+      expect(tombstone).toBeDefined();
+      expect(tombstone?.status).toBe("PENDING");
+
+      // Metadata and blob must be gone
+      expect(await AttachmentRepository.getAttachment(record.id, WORKSPACE_A)).toBeNull();
+    });
+
+    it("B2-Q: reconcileMissingDeleteQueueEntries creates a DELETE queue entry from tombstone", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-b2q",
+        workspaceId: WORKSPACE_A,
+        name: "photo.png",
+        mimeType: "image/png",
+        sizeBytes: 512,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["px"], { type: "image/png" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      // Manually clear any enqueued DELETE that deleteAttachment may have put in
+      // (we call atomic directly, so nothing should be queued yet)
+      const before = await getAllQueueRecords(WORKSPACE_A);
+      const deletesBefore = before.filter(
+        (r) => r.operation === "delete" && r.localId === record.id,
+      );
+      expect(deletesBefore).toHaveLength(0);
+
+      const recovered = await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+      expect(recovered).toBeGreaterThanOrEqual(1);
+
+      const after = await getAllQueueRecords(WORKSPACE_A);
+      const deletesAfter = after.filter(
+        (r) =>
+          r.entityType === "attachment" &&
+          r.operation === "delete" &&
+          r.localId === record.id,
+      );
+      expect(deletesAfter).toHaveLength(1);
+      expect(deletesAfter[0].workspaceId).toBe(WORKSPACE_A);
+    });
+
+    it("B2-R: reconstructed DELETE queue entry payload contains correct resourceType from tombstone", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-b2r",
+        workspaceId: WORKSPACE_A,
+        name: "clip.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 1024,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["v"], { type: "video/mp4" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      const tombstone = await AttachmentRepository.getTombstone(WORKSPACE_A, record.id);
+      expect(tombstone?.resourceType).toBe("video");
+
+      await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+
+      const queueRecords = await getAllQueueRecords(WORKSPACE_A);
+      const entry = queueRecords.find(
+        (r) => r.operation === "delete" && r.localId === record.id,
+      );
+      expect(entry).toBeDefined();
+      expect(entry?.payload?.resourceType).toBe("video");
+      expect(entry?.payload?.id).toBe(record.id);
+      expect(entry?.payload?.workspaceId).toBe(WORKSPACE_A);
+    });
+
+    it("B2-S: calling reconcileMissingDeleteQueueEntries 3x produces exactly 1 DELETE queue entry (idempotent)", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-b2s",
+        workspaceId: WORKSPACE_A,
+        name: "doc.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 200,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["d"], { type: "application/pdf" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+      await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+      await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+
+      const queueRecords = await getAllQueueRecords(WORKSPACE_A);
+      const deletes = queueRecords.filter(
+        (r) => r.operation === "delete" && r.localId === record.id,
+      );
+      expect(deletes).toHaveLength(1);
+    });
+
+    it("B2-T: simulated restart — reconcileMissingDeleteQueueEntries reconstructs queue from durable tombstone", async () => {
+      // IDB is persistent per test suite with fake-indexeddb/auto; this tests
+      // that tombstone state alone is sufficient to recover (no in-memory state needed)
+      const record = createAttachmentRecord({
+        noteId: "note-b2t",
+        workspaceId: WORKSPACE_A,
+        name: "audio.mp3",
+        mimeType: "audio/mp3",
+        sizeBytes: 300,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["a"], { type: "audio/mp3" }),
+      );
+      // Phase 1: delete committed (simulates crash before enqueue)
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      // Phase 2: "restart" — tombstone must still be present
+      const tombstone = await AttachmentRepository.getTombstone(WORKSPACE_A, record.id);
+      expect(tombstone).toBeDefined();
+      expect(tombstone?.resourceType).toBe("video"); // audio → video in Cloudinary
+
+      // Phase 3: recovery reconstructs queue entry
+      const recovered = await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+      expect(recovered).toBeGreaterThanOrEqual(1);
+
+      const queueRecords = await getAllQueueRecords(WORKSPACE_A);
+      const entry = queueRecords.find(
+        (r) => r.operation === "delete" && r.localId === record.id,
+      );
+      expect(entry).toBeDefined();
+    });
+
+    it("B2-U: workspace isolation — recovery for workspace B does not affect workspace A tombstones", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-b2u",
+        workspaceId: WORKSPACE_A,
+        name: "img.png",
+        mimeType: "image/png",
+        sizeBytes: 100,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["i"], { type: "image/png" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      // Recovery for WORKSPACE_B should produce 0
+      const countB = await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_B);
+      expect(countB).toBe(0);
+
+      // Recovery for WORKSPACE_A should produce ≥1
+      const countA = await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+      expect(countA).toBeGreaterThanOrEqual(1);
+    });
+
+    it("B2-V: after recovery, getAttachment returns null and getAttachmentBlob does not restore data", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-b2v",
+        workspaceId: WORKSPACE_A,
+        name: "file.png",
+        mimeType: "image/png",
+        sizeBytes: 50,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["f"], { type: "image/png" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+      await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+
+      // Metadata must still be gone
+      const att = await AttachmentRepository.getAttachment(record.id, WORKSPACE_A);
+      expect(att).toBeNull();
+
+      // Blob must still be gone
+      await expect(
+        AttachmentRepository.getAttachmentBlob(record.id, WORKSPACE_A),
+      ).rejects.toThrow();
+    });
+
+    it("B2-W: tombstoned attachment excluded from CREATE recovery (reconcileMissingQueueEntries returns 0)", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-b2w",
+        workspaceId: WORKSPACE_A,
+        name: "gone.png",
+        mimeType: "image/png",
+        sizeBytes: 80,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["g"], { type: "image/png" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      // CREATE recovery must skip this — it is tombstoned
+      const recovered = await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_A);
+      expect(recovered).toBe(0);
+    });
+
+    it("B2-X: tombstone with existing active pending DELETE queue entry — recovery returns 0 (no duplicate)", async () => {
+      const record = createAttachmentRecord({
+        noteId: "note-b2x",
+        workspaceId: WORKSPACE_A,
+        name: "dup.png",
+        mimeType: "image/png",
+        sizeBytes: 60,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["d"], { type: "image/png" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      // First recovery creates the entry
+      const first = await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+      expect(first).toBeGreaterThanOrEqual(1);
+
+      // Second recovery sees existing pending entry and skips it
+      const second = await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+      // The record recovered previously is still in "pending" state, so count should be 0
+      expect(second).toBe(0);
+
+      // Only one DELETE entry for this attachment
+      const queueRecords = await getAllQueueRecords(WORKSPACE_A);
+      const deletes = queueRecords.filter(
+        (r) => r.operation === "delete" && r.localId === record.id,
+      );
+      expect(deletes).toHaveLength(1);
+    });
+
+    it("B2-Y: tombstone with status FAILED DELETE queue entry — recovery returns 0 (retryable, not duplicated)", async () => {
+      // Import enqueueSyncOperation to manually set up a failed queue entry
+      const { enqueueSyncOperation, markOperationFailed } = await import("./syncQueue");
+
+      const record = createAttachmentRecord({
+        noteId: "note-b2y",
+        workspaceId: WORKSPACE_A,
+        name: "retry.png",
+        mimeType: "image/png",
+        sizeBytes: 70,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["r"], { type: "image/png" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      // Manually enqueue a DELETE and mark it failed
+      const queueRecord = await enqueueSyncOperation({
+        workspaceId: WORKSPACE_A,
+        entityType: "attachment",
+        operation: "delete",
+        localId: record.id,
+        payload: { id: record.id, workspaceId: WORKSPACE_A, resourceType: "image" },
+      });
+      await markOperationFailed(queueRecord.id, "network error");
+
+      // Recovery must see the failed entry and NOT add a duplicate
+      const recovered = await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+      expect(recovered).toBe(0);
+
+      const queueRecords = await getAllQueueRecords(WORKSPACE_A);
+      const deletes = queueRecords.filter(
+        (r) => r.operation === "delete" && r.localId === record.id,
+      );
+      expect(deletes).toHaveLength(1);
+    });
+
+    it("B2-Z: tombstone with status COMPLETED — recovery skips it (cloud cleanup already done)", async () => {
+      // Import needed helpers
+      const { enqueueSyncOperation, markOperationSynced, markOperationProcessing } = await import("./syncQueue");
+
+      const record = createAttachmentRecord({
+        noteId: "note-b2z",
+        workspaceId: WORKSPACE_A,
+        name: "done.png",
+        mimeType: "image/png",
+        sizeBytes: 90,
+        syncState: "SYNC_PENDING",
+      });
+      await AttachmentRepository.commitLocalAttachment(
+        record,
+        new Blob(["done"], { type: "image/png" }),
+      );
+      await AttachmentRepository.deleteLocalAttachmentAtomic(WORKSPACE_A, record.id);
+
+      // Simulate the tombstone having status=COMPLETED by updating via the store directly
+      await runTransaction("attachmentDeletions", "readwrite", async (tx) => {
+        const store = tx.objectStore("attachmentDeletions");
+        const index = store.index("workspaceId_localAttachmentId");
+        const existing = await requestToPromise<AttachmentDeletionRecord | undefined>(
+          index.get([WORKSPACE_A, record.id]),
+        );
+        if (existing) {
+          store.put({ ...existing, status: "COMPLETED" });
+        }
+      });
+
+      // Recovery should return 0 — COMPLETED tombstones are not eligible
+      const recovered = await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+      expect(recovered).toBe(0);
+    });
+
+    it("recovers a durable deletion tombstone when DELETE queue insertion fails", async () => {
+      // ── Step A: Create an attachment ──────────────────────────────────────────
+      const noteId = "note-failure-boundary-1";
+      const record = createAttachmentRecord({
+        noteId,
+        workspaceId: WORKSPACE_A,
+        name: "document-scan.png",
+        mimeType: "image/png",
+        sizeBytes: 512,
+        syncState: "SYNC_PENDING",
+      });
+      const expectedResourceType = deriveCloudinaryResourceType(record.kind, record.mimeType);
+      expect(expectedResourceType).toBe("image");
+
+      const testBlob = new Blob(["test-png-binary-data"], { type: "image/png" });
+      await AttachmentRepository.commitLocalAttachment(record, testBlob);
+
+      // Verify attachment metadata and Blob exist prior to deletion
+      const attBefore = await AttachmentRepository.getAttachment(record.id, WORKSPACE_A);
+      expect(attBefore).not.toBeNull();
+      expect(attBefore?.id).toBe(record.id);
+
+      const blobBefore = await AttachmentRepository.getAttachmentBlob(record.id, WORKSPACE_A);
+      expect(blobBefore).toBeDefined();
+      expect(blobBefore.size).toBe(testBlob.size);
+
+      // Ensure queue is initially clear of any operations for this attachment
+      const queueBefore = await syncQueue.getAllQueueRecords(WORKSPACE_A);
+      expect(queueBefore.filter((r) => r.localId === record.id)).toHaveLength(0);
+
+      // ── Step B: Force actual enqueueSyncOperation to fail ────────────────────
+      const simulatedError = new Error("Simulated IndexedDB queue write failure");
+      const enqueueSpy = vi
+        .spyOn(syncQueue, "enqueueSyncOperation")
+        .mockRejectedValueOnce(simulatedError);
+
+      try {
+        // Invoke real service deletion workflow (NOT calling deleteLocalAttachmentAtomic directly)
+        await AttachmentService.deleteAttachment(record.id, WORKSPACE_A);
+
+        // Confirm the test really intercepted the call
+        expect(enqueueSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspaceId: WORKSPACE_A,
+            entityType: "attachment",
+            operation: "delete",
+            localId: record.id,
+            payload: expect.objectContaining({
+              id: record.id,
+              workspaceId: WORKSPACE_A,
+              resourceType: expectedResourceType,
+            }),
+          }),
+        );
+
+        // ── Step C: Verify local deletion survives ─────────────────────────────
+        // 1. AttachmentRecord is absent
+        const attAfter = await AttachmentRepository.getAttachment(record.id, WORKSPACE_A);
+        expect(attAfter).toBeNull();
+
+        // 2. Attachment Blob is absent
+        await expect(
+          AttachmentRepository.getAttachmentBlob(record.id, WORKSPACE_A),
+        ).rejects.toThrow();
+
+        // 3 & 4. Deletion tombstone exists for original workspace and attachment UUID
+        const tombstone = await AttachmentRepository.getTombstone(WORKSPACE_A, record.id);
+        expect(tombstone).toBeDefined();
+        expect(tombstone?.workspaceId).toBe(WORKSPACE_A);
+        expect(tombstone?.localAttachmentId).toBe(record.id);
+        expect(tombstone?.status).toBe("PENDING");
+
+        // 5. Preserves the expected resourceType
+        expect(tombstone?.resourceType).toBe(expectedResourceType);
+
+        // 6. No DELETE queue entry was created by the failed enqueue attempt
+        const queueAfterFailedDelete = await syncQueue.getAllQueueRecords(WORKSPACE_A);
+        const deletesAfterFailed = queueAfterFailedDelete.filter(
+          (r) => r.operation === "delete" && r.localId === record.id,
+        );
+        expect(deletesAfterFailed).toHaveLength(0);
+
+        // 7. No CREATE queue entry exists for the deleted attachment
+        const createsAfterFailed = queueAfterFailedDelete.filter(
+          (r) => r.operation === "create" && r.localId === record.id,
+        );
+        expect(createsAfterFailed).toHaveLength(0);
+
+        // ── Step D: Simulate restart/reinitialization & restore real queue ──────
+        enqueueSpy.mockRestore();
+
+        // Invoke the actual recovery method
+        const recoveredCount =
+          await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+        expect(recoveredCount).toBe(1);
+
+        // ── Step E: Verify recovery ────────────────────────────────────────────
+        const queueAfterRecovery = await syncQueue.getAllQueueRecords(WORKSPACE_A);
+        const deletesAfterRecovery = queueAfterRecovery.filter(
+          (r) => r.operation === "delete" && r.localId === record.id,
+        );
+        // Exactly one DELETE queue entry now exists
+        expect(deletesAfterRecovery).toHaveLength(1);
+        const recoveredOp = deletesAfterRecovery[0];
+        expect(recoveredOp.entityType).toBe("attachment");
+        expect(recoveredOp.operation).toBe("delete");
+        expect(recoveredOp.localId).toBe(record.id);
+        expect(recoveredOp.workspaceId).toBe(WORKSPACE_A);
+        expect(recoveredOp.payload?.id).toBe(record.id);
+        expect(recoveredOp.payload?.workspaceId).toBe(WORKSPACE_A);
+        expect(recoveredOp.payload?.resourceType).toBe(expectedResourceType);
+        expect(recoveredOp.payload?.resourceType).toBe(tombstone?.resourceType);
+
+        // AttachmentRecord remains absent
+        expect(await AttachmentRepository.getAttachment(record.id, WORKSPACE_A)).toBeNull();
+        // Blob remains absent
+        await expect(
+          AttachmentRepository.getAttachmentBlob(record.id, WORKSPACE_A),
+        ).rejects.toThrow();
+
+        // No CREATE queue entry exists for the deleted attachment
+        const createsAfterRecovery = queueAfterRecovery.filter(
+          (r) => r.operation === "create" && r.localId === record.id,
+        );
+        expect(createsAfterRecovery).toHaveLength(0);
+
+        // Verify CREATE recovery does not resurrect it either
+        const createRecoveryCount =
+          await AttachmentRepository.reconcileMissingQueueEntries(WORKSPACE_A);
+        expect(createRecoveryCount).toBe(0);
+
+        // ── Step F: Verify idempotency ─────────────────────────────────────────
+        const secondRecoveryCount =
+          await AttachmentRepository.reconcileMissingDeleteQueueEntries(WORKSPACE_A);
+        expect(secondRecoveryCount).toBe(0);
+
+        const queueAfterSecondRecovery = await syncQueue.getAllQueueRecords(WORKSPACE_A);
+        const deletesAfterSecond = queueAfterSecondRecovery.filter(
+          (r) => r.operation === "delete" && r.localId === record.id,
+        );
+        expect(deletesAfterSecond).toHaveLength(1);
+
+        // Tombstone and resource type remain intact
+        const finalTombstone = await AttachmentRepository.getTombstone(WORKSPACE_A, record.id);
+        expect(finalTombstone).toBeDefined();
+        expect(finalTombstone?.status).toBe("PENDING");
+        expect(finalTombstone?.resourceType).toBe(expectedResourceType);
+      } finally {
+        enqueueSpy.mockRestore();
+      }
+    });
   });
 });

@@ -148,6 +148,14 @@ export class SyncService {
       this._log(`Reconstructed ${missingQueueRecovered} missing attachment queue entry(ies).`);
     }
 
+    // ── Task 7: Delete Queue Recovery ──────────────────────────────────────────
+    // Reconstruct missing DELETE syncQueue entries for tombstoned attachments
+    // whose initial enqueueSyncOperation("delete") failed.
+    const missingDeleteRecovered = await AttachmentRepository.reconcileMissingDeleteQueueEntries(workspaceId);
+    if (missingDeleteRecovered > 0) {
+      this._log(`Reconstructed ${missingDeleteRecovered} missing attachment DELETE queue entry(ies).`);
+    }
+
     // Rehydrate last known state from IndexedDB.
     const savedState = await getSyncState(workspaceId);
     if (savedState) {

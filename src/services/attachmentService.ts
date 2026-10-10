@@ -315,6 +315,7 @@ export class AttachmentService {
     }
 
     await AttachmentRepository.deleteLocalAttachmentAtomic(wsId, attachmentId);
+    const tombstone = await AttachmentRepository.getTombstone(wsId, attachmentId);
 
     try {
       await enqueueSyncOperation({
@@ -322,7 +323,11 @@ export class AttachmentService {
         entityType: "attachment",
         operation: "delete",
         localId: attachmentId,
-        payload: { id: attachmentId, workspaceId: wsId },
+        payload: {
+          id: attachmentId,
+          workspaceId: wsId,
+          resourceType: tombstone?.resourceType,
+        },
       });
     } catch (enqueueErr) {
       console.warn("[AYMO-ATT] Failed to enqueue sync operation:", enqueueErr);

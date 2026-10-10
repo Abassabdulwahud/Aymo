@@ -3,6 +3,7 @@ import {
   AttachmentBlobRecord,
   AttachmentDeletionRecord,
   AttachmentKind,
+  CloudinaryResourceType,
 } from "../types";
 import {
   runTransaction,
@@ -32,6 +33,23 @@ export function detectAttachmentKind(fileName: string, mimeType: string): Attach
     return "audio";
   }
   return "document";
+}
+
+export function deriveCloudinaryResourceType(
+  kind?: AttachmentKind | null,
+  mimeType?: string | null,
+): CloudinaryResourceType {
+  if (kind === "image") return "image";
+  if (kind === "video" || kind === "audio") return "video";
+  if (kind === "pdf" || kind === "document" || kind === "link") return "raw";
+
+  if (mimeType) {
+    const mime = mimeType.toLowerCase();
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("video/") || mime.startsWith("audio/")) return "video";
+  }
+
+  return "raw";
 }
 
 export function createAttachmentRecord(params: {
@@ -274,6 +292,8 @@ export class AttachmentRepository {
           (att.syncState === "SYNCED" ||
             att.syncState === "SYNCING" ||
             att.syncState === "PENDING" ||
+            att.syncState === "SYNC_PENDING" ||
+            att.syncState === "SYNC_FAILED" ||
             !!att.remoteId ||
             !!att.cloudinaryPublicId ||
             !!att.remoteUrl ||
@@ -293,6 +313,8 @@ export class AttachmentRepository {
           >(index.get([workspaceId, attachmentId]));
 
           const now = new Date().toISOString();
+          const derivedResourceType = deriveCloudinaryResourceType(att.kind, att.mimeType);
+
           if (existingTombstone) {
             existingTombstone.status = "PENDING";
             existingTombstone.deletedAt = now;
@@ -300,6 +322,7 @@ export class AttachmentRepository {
             if (att.cloudinaryPublicId) {
               existingTombstone.cloudinaryPublicId = att.cloudinaryPublicId;
             }
+            existingTombstone.resourceType = derivedResourceType;
             delStore.put(existingTombstone);
           } else {
             const tombstone: AttachmentDeletionRecord = {
@@ -308,6 +331,7 @@ export class AttachmentRepository {
               localAttachmentId: attachmentId,
               remoteId: att.remoteId,
               cloudinaryPublicId: att.cloudinaryPublicId,
+              resourceType: derivedResourceType,
               deletedAt: now,
               status: "PENDING",
               retryCount: 0,
@@ -324,6 +348,22 @@ export class AttachmentRepository {
   }
 
   /**
+   * Retrieves a tombstone record for a deleted attachment in a specific workspace.
+   */
+  static async getTombstone(
+    workspaceId: string,
+    attachmentId: string,
+  ): Promise<AttachmentDeletionRecord | undefined> {
+    return runTransaction("attachmentDeletions", "readonly", async (tx) => {
+      const store = tx.objectStore("attachmentDeletions");
+      const index = store.index("workspaceId_localAttachmentId");
+      return requestToPromise<AttachmentDeletionRecord | undefined>(
+        index.get([workspaceId, attachmentId]),
+      );
+    });
+  }
+
+  /**
    * Reconciles late remote IDs returned after local deletion.
    * If tombstone exists: attaches remote identity to tombstone.
    * If no tombstone exists: commits durable syncQueue cleanup record.
@@ -333,6 +373,7 @@ export class AttachmentRepository {
     localAttachmentId: string,
     remoteId?: string,
     cloudinaryPublicId?: string,
+    resourceType?: CloudinaryResourceType,
   ): Promise<void> {
     await runTransaction(
       ["attachmentDeletions", "syncQueue"],
@@ -349,6 +390,7 @@ export class AttachmentRepository {
         if (tombstone) {
           if (remoteId) tombstone.remoteId = remoteId;
           if (cloudinaryPublicId) tombstone.cloudinaryPublicId = cloudinaryPublicId;
+          if (resourceType) tombstone.resourceType = resourceType;
           tombstone.status = "PENDING";
           delStore.put(tombstone);
         } else {
@@ -363,6 +405,7 @@ export class AttachmentRepository {
               localAttachmentId,
               remoteId,
               cloudinaryPublicId,
+              resourceType,
             },
             status: "pending",
             createdAt: now,
@@ -482,6 +525,73 @@ export class AttachmentRepository {
         recoveredCount++;
       } catch (err) {
         console.warn(`[AYMO-REPO] Failed to reconstruct queue entry for attachment ${att.id}:`, err);
+      }
+    }
+
+    return recoveredCount;
+  }
+
+  /**
+   * Scans the `attachmentDeletions` store for tombstones whose remote cleanup
+   * is still pending (status = PENDING | FAILED) but that have no corresponding
+   * active DELETE queue entry. This can happen when `enqueueSyncOperation` fails
+   * after `deleteLocalAttachmentAtomic` has already committed.
+   *
+   * Safe to call multiple times — idempotent per tombstone.
+   * Never creates or restores AttachmentRecord / Blob.
+   * Uses tombstone's durable `resourceType` field (does not re-derive).
+   */
+  static async reconcileMissingDeleteQueueEntries(workspaceId: string): Promise<number> {
+    // 1. Fetch all tombstones for this workspace
+    const tombstones = await runTransaction("attachmentDeletions", "readonly", async (tx) => {
+      const store = tx.objectStore("attachmentDeletions");
+      const index = store.index("workspaceId");
+      return await requestToPromise<AttachmentDeletionRecord[]>(index.getAll(workspaceId));
+    });
+
+    // Only process tombstones that still need cloud cleanup
+    const eligibleTombstones = tombstones.filter(
+      (t) => t.status === "PENDING" || t.status === "FAILED",
+    );
+    if (eligibleTombstones.length === 0) return 0;
+
+    // 2. Find queue records that already cover a DELETE for these attachments
+    const queueRecords = await getAllQueueRecords(workspaceId);
+    const activeDeleteLocalIds = new Set(
+      queueRecords
+        .filter(
+          (r) =>
+            r.entityType === "attachment" &&
+            r.operation === "delete" &&
+            (r.status === "pending" || r.status === "processing" || r.status === "failed"),
+        )
+        .map((r) => r.localId),
+    );
+
+    let recoveredCount = 0;
+
+    for (const tombstone of eligibleTombstones) {
+      // Skip if an active DELETE queue entry already exists
+      if (activeDeleteLocalIds.has(tombstone.localAttachmentId)) continue;
+
+      try {
+        await enqueueSyncOperation({
+          workspaceId,
+          entityType: "attachment",
+          operation: "delete",
+          localId: tombstone.localAttachmentId,
+          payload: {
+            id: tombstone.localAttachmentId,
+            workspaceId,
+            resourceType: tombstone.resourceType,
+          },
+        });
+        recoveredCount++;
+      } catch (err) {
+        console.warn(
+          `[AYMO-REPO] Failed to reconstruct DELETE queue entry for attachment ${tombstone.localAttachmentId}:`,
+          err,
+        );
       }
     }
 

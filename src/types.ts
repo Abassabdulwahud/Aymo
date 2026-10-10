@@ -162,12 +162,15 @@ export type RemoteDeletionState =
   | "COMPLETED"
   | "FAILED";
 
+export type CloudinaryResourceType = "image" | "video" | "raw";
+
 export interface AttachmentDeletionRecord {
   id: string;
   workspaceId: string;
   localAttachmentId: string;
   remoteId?: string;
   cloudinaryPublicId?: string;
+  resourceType?: CloudinaryResourceType;
   deletedAt: string;
   status: RemoteDeletionState;
   retryCount: number;
