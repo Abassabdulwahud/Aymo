@@ -364,6 +364,27 @@ export class AttachmentRepository {
   }
 
   /**
+   * Updates an existing tombstone record in the attachmentDeletions store.
+   */
+  static async updateTombstone(
+    workspaceId: string,
+    attachmentId: string,
+    patch: Partial<AttachmentDeletionRecord>,
+  ): Promise<void> {
+    await runTransaction("attachmentDeletions", "readwrite", async (tx) => {
+      const store = tx.objectStore("attachmentDeletions");
+      const index = store.index("workspaceId_localAttachmentId");
+      const tombstone = await requestToPromise<AttachmentDeletionRecord | undefined>(
+        index.get([workspaceId, attachmentId]),
+      );
+      if (tombstone) {
+        Object.assign(tombstone, patch);
+        store.put(tombstone);
+      }
+    });
+  }
+
+  /**
    * Reconciles late remote IDs returned after local deletion.
    * If tombstone exists: attaches remote identity to tombstone.
    * If no tombstone exists: commits durable syncQueue cleanup record.

@@ -4,6 +4,10 @@ function resolveApiBaseUrl(): string {
     return configuredBaseUrl;
   }
 
+  if (typeof window === "undefined") {
+    return "http://127.0.0.1:8000";
+  }
+
   const { protocol, hostname, port } = window.location;
   const isLocalDevFrontend = ["127.0.0.1", "localhost"].includes(hostname) && ["5173", "5174", "5175"].includes(port);
   if (isLocalDevFrontend) {

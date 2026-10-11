@@ -79,6 +79,11 @@ import type {
 
 
 import { AttachmentRepository } from "./attachmentRepository";
+import {
+  requestCloudinaryUploadAuth,
+  uploadBlobToCloudinary,
+  requestCloudinaryDeletion,
+} from "./cloudinaryUploadService";
 
 // ─── Retry Policy ─────────────────────────────────────────────────────────────
 
@@ -615,6 +620,121 @@ export class SyncService {
     await markOperationProcessing(record.id);
 
     try {
+      if (record.entityType === "attachment") {
+        if (record.operation === "create") {
+          const isLink = record.payload?.kind === "link";
+
+          // 1. Pre-upload tombstone check: if attachment was already deleted locally, abort CREATE
+          const tombstoneBefore = await AttachmentRepository.getTombstone(
+            record.workspaceId,
+            record.localId,
+          );
+          if (tombstoneBefore) {
+            this._log(`Attachment ${record.localId} was deleted before upload; aborting CREATE.`);
+            await markOperationSynced(record.id);
+            return true;
+          }
+
+          const localAtt = await AttachmentRepository.getAttachment(
+            record.localId,
+            record.workspaceId,
+          );
+          if (!localAtt) {
+            this._log(`Attachment ${record.localId} not found locally; aborting CREATE.`);
+            await markOperationSynced(record.id);
+            return true;
+          }
+
+          let remoteUrl = localAtt.remoteUrl || (record.payload?.remoteUrl as string | undefined);
+          let storageKey = localAtt.cloudinaryPublicId || (record.payload?.storageKey as string | undefined);
+
+          // 2. Binary upload to Cloudinary (skip if link or already uploaded)
+          if (!isLink && (!remoteUrl || !storageKey)) {
+            const blob = await AttachmentRepository.getAttachmentBlob(
+              record.localId,
+              record.workspaceId,
+            );
+
+            const auth = await requestCloudinaryUploadAuth(
+              record.workspaceId,
+              record.localId,
+              localAtt.mimeType,
+              localAtt.sizeBytes,
+            );
+
+            const uploadResult = await uploadBlobToCloudinary(blob, auth);
+
+            // 3. Post-upload tombstone check: if deleted during upload, DO NOT resurrect or push
+            const tombstoneAfter = await AttachmentRepository.getTombstone(
+              record.workspaceId,
+              record.localId,
+            );
+            if (tombstoneAfter) {
+              this._log(`Attachment ${record.localId} was deleted during upload; scheduling remote cleanup.`);
+              await AttachmentRepository.updateTombstone(record.workspaceId, record.localId, {
+                cloudinaryPublicId: uploadResult.publicId,
+                status: "PENDING",
+              });
+              await markOperationSynced(record.id);
+              return true;
+            }
+
+            remoteUrl = uploadResult.secureUrl;
+            storageKey = uploadResult.publicId;
+
+            // 4. Persist remote result locally before metadata sync
+            await AttachmentRepository.updateAttachment(record.localId, record.workspaceId, {
+              cloudinaryPublicId: uploadResult.publicId,
+              remoteUrl: uploadResult.secureUrl,
+            });
+          }
+
+          // 5. Update queue record payload so metadata push contains remoteUrl and storageKey
+          record.payload = {
+            ...record.payload,
+            remoteUrl: remoteUrl || "",
+            storageKey: storageKey || null,
+          };
+
+          // 6. Push metadata to MongoDB
+          const { remoteId } = await adapter.pushOperation(record);
+
+          await setRemoteMapping(
+            record.workspaceId,
+            record.entityType,
+            record.localId,
+            remoteId,
+          );
+
+          await markOperationSynced(record.id);
+
+          await AttachmentRepository.updateAttachment(record.localId, record.workspaceId, {
+            syncState: "SYNCED",
+            remoteId,
+            cloudinaryPublicId: storageKey,
+            remoteUrl,
+          });
+
+          this._log(`Synced attachment ${record.localId} → ${remoteId} (Cloudinary: ${storageKey})`);
+          return true;
+        } else if (record.operation === "delete") {
+          // Remote Deletion Flow for Attachments
+          try {
+            await requestCloudinaryDeletion(record.workspaceId, record.localId);
+          } catch (deleteErr) {
+            this._log(`Remote Cloudinary deletion notice for ${record.localId}:`, deleteErr);
+          }
+
+          await AttachmentRepository.updateTombstone(record.workspaceId, record.localId, {
+            status: "COMPLETED",
+          });
+
+          await markOperationSynced(record.id);
+          this._log(`Deleted attachment ${record.localId} remotely.`);
+          return true;
+        }
+      }
+
       const { remoteId } = await adapter.pushOperation(record);
 
       // Success: store the local ↔ remote ID mapping.
@@ -626,17 +746,6 @@ export class SyncService {
       );
 
       await markOperationSynced(record.id);
-
-      if (record.entityType === "attachment") {
-        try {
-          await AttachmentRepository.updateAttachment(record.localId, record.workspaceId, {
-            syncState: "SYNCED",
-            remoteId,
-          });
-        } catch {
-          /* ignore if record removed */
-        }
-      }
 
       this._log(`Synced ${record.entityType} ${record.localId} → ${remoteId}`);
       return true;

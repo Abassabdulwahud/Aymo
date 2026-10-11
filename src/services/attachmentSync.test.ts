@@ -14,6 +14,29 @@ vi.mock("./connectivityService", async (importOriginal) => {
   };
 });
 
+vi.mock("./cloudinaryUploadService", () => ({
+  requestCloudinaryUploadAuth: vi.fn(async (_ws: string, id: string) => ({
+    cloudName: "mock-cloud",
+    apiKey: "mock-api-key",
+    timestamp: 1234567890,
+    publicId: `mock-public-${id}`,
+    folder: "mock-folder",
+    resourceType: "raw",
+    signature: "mock-sig",
+    uploadUrl: "https://mock.cloudinary.com/upload",
+  })),
+  uploadBlobToCloudinary: vi.fn(async (_blob: Blob, auth: any) => ({
+    publicId: auth.publicId,
+    secureUrl: `https://mock.cloudinary.com/${auth.publicId}`,
+    resourceType: auth.resourceType,
+  })),
+  requestCloudinaryDeletion: vi.fn(async (_ws: string, id: string) => ({
+    status: "deleted",
+    attachmentId: id,
+    cloudinaryPublicId: `mock-public-${id}`,
+  })),
+}));
+
 import { AttachmentService } from "./attachmentService";
 import { AttachmentRepository } from "./attachmentRepository";
 import { SyncService } from "./syncService";
