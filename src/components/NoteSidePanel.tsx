@@ -1,5 +1,5 @@
 import { DragEvent, useEffect, useMemo, useState } from "react";
-import { FileText, Link, Plus, Trash2, ChevronDown, ChevronUp } from "lucide-react";
+import { FileText, Link, MessageSquare, Plus, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { useI18n } from "../i18n";
 import { AIProvider, ChatMessage, UploadedItem } from "../types";
 import { AIAssistantPanel } from "./AIAssistantPanel";
@@ -242,7 +242,7 @@ export function NoteSidePanel({
                 title="Toggle annotations panel"
                 style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
               >
-                <span>📌</span>
+                <MessageSquare size={17} strokeWidth={1.8} />
               </button>
             )}
             <button
