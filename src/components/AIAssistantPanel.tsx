@@ -25,6 +25,7 @@ interface AIAssistantPanelProps {
   aiProvider: AIProvider;
   onAIProviderChange: (provider: AIProvider) => void;
   onSubmitPrompt: (prompt: string) => Promise<void>;
+  isLoadingHistory?: boolean;
 }
 
 type SpeechRecognitionInstance = {
@@ -92,6 +93,7 @@ export function AIAssistantPanel({
   aiProvider,
   onAIProviderChange,
   onSubmitPrompt,
+  isLoadingHistory = false,
 }: AIAssistantPanelProps) {
   const { language } = useI18n();
   const [chatInput, setChatInput] = useState("");
@@ -335,7 +337,9 @@ export function AIAssistantPanel({
             );
           })}
           {messages.length === 0 ? (
-            <div className="assistant-empty">Ask a question about your note.</div>
+            isLoadingHistory ? null : (
+              <div className="assistant-empty">Ask a question about your note.</div>
+            )
           ) : null}
         </div>
       </div>

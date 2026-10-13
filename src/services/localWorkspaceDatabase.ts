@@ -1,3 +1,5 @@
+import type { ChatMessage } from "../types";
+
 export interface LocalWorkspace {
   id: string;
   name: string;
@@ -452,5 +454,78 @@ export async function deleteLocalAttachmentBlob(id: string): Promise<void> {
     transaction.objectStore("attachmentBlobs").delete(id);
   });
 }
+
+// ─── AI Chat History ─────────────────────────────────────────────────────────
+
+export interface LocalAIChatHistory {
+  id: string; // `${workspaceId}:${noteId}`
+  workspaceId: string;
+  noteId: string;
+  messages: ChatMessage[];
+  updatedAt: string;
+}
+
+export async function putLocalAIChatHistory(
+  workspaceId: string,
+  noteId: string | number,
+  messages: ChatMessage[],
+): Promise<void> {
+  const noteKey = String(noteId);
+  const primaryKey = `${workspaceId}:${noteKey}`;
+  const record: LocalAIChatHistory = {
+    id: primaryKey,
+    workspaceId,
+    noteId: noteKey,
+    messages,
+    updatedAt: new Date().toISOString(),
+  };
+  await runTransaction("aiHistory", "readwrite", async (transaction) => {
+    transaction.objectStore("aiHistory").put(record);
+  });
+}
+
+export async function getLocalAIChatHistory(
+  workspaceId: string,
+  noteId: string | number,
+): Promise<ChatMessage[]> {
+  const noteKey = String(noteId);
+  const primaryKey = `${workspaceId}:${noteKey}`;
+  return runTransaction("aiHistory", "readonly", async (transaction) => {
+    const store = transaction.objectStore("aiHistory");
+    let record = await requestToPromise<LocalAIChatHistory | undefined>(
+      store.get(primaryKey),
+    );
+    if (!record) {
+      record = await requestToPromise<LocalAIChatHistory | undefined>(
+        store.get(noteKey),
+      );
+    }
+    return record?.messages ?? [];
+  });
+}
+
+export async function deleteLocalAIChatHistory(
+  workspaceId: string,
+  noteId: string | number,
+): Promise<void> {
+  const noteKey = String(noteId);
+  const primaryKey = `${workspaceId}:${noteKey}`;
+  await runTransaction("aiHistory", "readwrite", async (transaction) => {
+    const store = transaction.objectStore("aiHistory");
+    store.delete(primaryKey);
+    store.delete(noteKey);
+  });
+}
+
+export async function listLocalAIChatHistories(
+  workspaceId: string,
+): Promise<LocalAIChatHistory[]> {
+  return runTransaction("aiHistory", "readonly", async (transaction) => {
+    const store = transaction.objectStore("aiHistory");
+    const index = store.index("workspaceId");
+    return requestToPromise<LocalAIChatHistory[]>(index.getAll(workspaceId));
+  });
+}
+
 
 

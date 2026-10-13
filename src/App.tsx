@@ -45,6 +45,12 @@ import {
 } from "./services/notesService";
 import { listTags } from "./services/tagsService";
 import { chatWithAIHttp, listAIResponses, streamAIChat } from "./services/aiService";
+import {
+  loadAIChatHistory,
+  saveAIChatHistory,
+  clearAIChatHistory,
+  mergeChatMessages,
+} from "./services/aiChatHistoryService";
 import { queueLinkScrape, queuePdfExtraction, syncNoteContent } from "./services/contentService";
 import { loadNoteRightPanelLayout, saveNoteRightPanelLayout } from "./services/noteLayoutStorage";
 import * as annotationsService from "./services/annotationsService";
@@ -445,6 +451,7 @@ export default function App() {
 
   const [openNoteMenuId, setOpenNoteMenuId] = useState<string | number | null>(null);
   const [chatMessagesByNote, setChatMessagesByNote] = useState<Record<string | number, ChatMessage[]>>({});
+  const loadedChatNotesRef = useRef<Set<string>>(new Set());
   
   // Annotation system state
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
@@ -964,27 +971,56 @@ export default function App() {
     let cancelled = false;
 
     const hydrateChatHistory = async () => {
-      if (!authToken || !selectedNote) {
+      if (!selectedNote) {
         return;
       }
-      if (chatMessagesByNote[selectedNote.id]) {
+      const noteKey = String(selectedNote.id);
+      if (loadedChatNotesRef.current.has(noteKey)) {
         return;
       }
 
+      const currentNoteId = selectedNote.id;
+      const wsId = (await getActiveWorkspaceId()) || "";
+      if (cancelled) return;
+
       try {
-        const items = await listAIResponses(authToken, selectedNote.id);
+        // 1. Restore saved conversation from local IndexedDB first
+        const localMessages = wsId ? await loadAIChatHistory(wsId, currentNoteId) : [];
         if (cancelled) return;
+
+        let combinedMessages = localMessages;
+
+        // 2. If authenticated, fetch remote cached responses and merge without duplicates
+        if (authToken) {
+          try {
+            const items = await listAIResponses(authToken, currentNoteId);
+            if (!cancelled && items.length > 0) {
+              const remoteMessages = mapCachedResponsesToMessages(items.reverse());
+              combinedMessages = mergeChatMessages(remoteMessages, localMessages);
+            }
+          } catch {
+            // Keep local messages if backend is unreachable
+          }
+        }
+
+        if (cancelled) return;
+
+        loadedChatNotesRef.current.add(noteKey);
         setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => {
-          if (prev[selectedNote.id]) {
+          if (prev[currentNoteId] !== undefined) {
             return prev;
           }
           return {
             ...prev,
-            [selectedNote.id]: mapCachedResponsesToMessages(items.reverse()),
+            [currentNoteId]: combinedMessages,
           };
         });
       } catch {
-        // Keep the chat panel usable even if history cannot be loaded.
+        if (cancelled) return;
+        loadedChatNotesRef.current.add(noteKey);
+        setChatMessagesByNote((prev) =>
+          prev[currentNoteId] !== undefined ? prev : { ...prev, [currentNoteId]: [] },
+        );
       }
     };
 
@@ -993,7 +1029,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [authToken, selectedNote, chatMessagesByNote]);
+  }, [authToken, selectedNote?.id]);
 
   // Fetch annotations when active note or its files change
   useEffect(() => {
@@ -1256,11 +1292,16 @@ export default function App() {
       });
       setSelectedId((current) => (current === id ? nextSelectedId : current));
       setTrashedNoteCount((prev) => prev + 1);
+      loadedChatNotesRef.current.delete(String(id));
       setChatMessagesByNote((prev) => {
         const next = { ...prev };
         delete next[id];
         return next;
       });
+      const wsId = (await getActiveWorkspaceId()) || "";
+      if (wsId) {
+        void clearAIChatHistory(wsId, id);
+      }
     } catch (error) {
       setHomeError(error instanceof Error ? error.message : t("app.deleteNoteError"));
     }
@@ -1578,24 +1619,35 @@ export default function App() {
     // No token or sync is required — the note body is read directly from local state.
     if (!selectedNote) return;
 
+    const currentNoteId = selectedNote.id;
+    const wsId = (await getActiveWorkspaceId()) || "";
+    loadedChatNotesRef.current.add(String(currentNoteId));
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       role: "user",
       content: prompt,
     };
+
+    const previousMessages = chatMessagesByNote[currentNoteId] ?? [];
+    const withUserMessages = [...previousMessages, userMessage];
+
     setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
       ...prev,
-      [selectedNote.id]: [...(prev[selectedNote.id] ?? []), userMessage],
+      [currentNoteId]: [...(prev[currentNoteId] ?? []), userMessage],
     }));
+
+    if (wsId) {
+      void saveAIChatHistory(wsId, currentNoteId, withUserMessages);
+    }
 
     const assistantMessageId = `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     // Insert the bubble immediately with "thinking" status so the user sees
     // acknowledgement before the first token arrives.
     setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
       ...prev,
-      [selectedNote.id]: [
-        ...(prev[selectedNote.id] ?? []),
+      [currentNoteId]: [
+        ...(prev[currentNoteId] ?? []),
         {
           id: assistantMessageId,
           role: "assistant" as const,
@@ -1612,7 +1664,7 @@ export default function App() {
       (text) => {
         setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
           ...prev,
-          [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) => {
+          [currentNoteId]: (prev[currentNoteId] ?? []).map((message) => {
             if (message.id !== assistantMessageId) return message;
             const nextStatus = firstDelta ? ("streaming" as const) : (message.status as "streaming");
             firstDelta = false;
@@ -1622,14 +1674,20 @@ export default function App() {
       },
       () => {
         // Drained and fully typed
-        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
-          ...prev,
-          [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
+        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => {
+          const updated = (prev[currentNoteId] ?? []).map((message) =>
             message.id === assistantMessageId
               ? { ...message, status: "done" as const }
               : message,
-          ),
-        }));
+          );
+          if (wsId) {
+            void saveAIChatHistory(wsId, currentNoteId, updated);
+          }
+          return {
+            ...prev,
+            [currentNoteId]: updated,
+          };
+        });
       }
     );
 
@@ -1652,16 +1710,33 @@ export default function App() {
         noteContext,
       );
 
+      // Persist completed stream text immediately so refresh during typewriter animation retains the complete response
+      if (wsId && streamed.content) {
+        const completedAssistantMessage: ChatMessage = {
+          id: assistantMessageId,
+          role: "assistant",
+          content: streamed.content,
+          status: "done",
+        };
+        void saveAIChatHistory(wsId, currentNoteId, [...withUserMessages, completedAssistantMessage]);
+      }
+
       if (streamed.cached) {
         streamer.destroy();
-        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
-          ...prev,
-          [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
+        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => {
+          const updated = (prev[currentNoteId] ?? []).map((message) =>
             message.id === assistantMessageId
               ? { ...message, content: streamed.content, status: "done" as const }
               : message,
-          ),
-        }));
+          );
+          if (wsId) {
+            void saveAIChatHistory(wsId, currentNoteId, updated);
+          }
+          return {
+            ...prev,
+            [currentNoteId]: updated,
+          };
+        });
       } else {
         streamer.finish();
       }
@@ -1669,14 +1744,20 @@ export default function App() {
       streamer.destroy();
       try {
         const fallback = await chatWithAIHttp(authToken, selectedNote.id, prompt, aiProvider, noteContext);
-        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => ({
-          ...prev,
-          [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
+        setChatMessagesByNote((prev): Record<string | number, ChatMessage[]> => {
+          const updated = (prev[currentNoteId] ?? []).map((message) =>
             message.id === assistantMessageId
               ? { ...message, content: fallback.response, status: "done" as const }
               : message,
-          ),
-        }));
+          );
+          if (wsId) {
+            void saveAIChatHistory(wsId, currentNoteId, updated);
+          }
+          return {
+            ...prev,
+            [currentNoteId]: updated,
+          };
+        });
       } catch (httpError) {
         let detail =
           httpError instanceof Error
@@ -1687,14 +1768,20 @@ export default function App() {
         if (detail === "Failed to fetch" || detail.includes("NetworkError") || detail.includes("network")) {
           detail = "AI is unavailable because there is no internet connection.";
         }
-        setChatMessagesByNote((prev) => ({
-          ...prev,
-          [selectedNote.id]: (prev[selectedNote.id] ?? []).map((message) =>
+        setChatMessagesByNote((prev) => {
+          const updated = (prev[currentNoteId] ?? []).map((message) =>
             message.id === assistantMessageId
               ? { ...message, content: detail.startsWith("AI is unavailable") ? detail : `AI error: ${detail}`, status: "error" as const }
               : message,
-          ),
-        }));
+          );
+          if (wsId) {
+            void saveAIChatHistory(wsId, currentNoteId, updated);
+          }
+          return {
+            ...prev,
+            [currentNoteId]: updated,
+          };
+        });
       }
     }
   };
@@ -1844,6 +1931,7 @@ export default function App() {
                   liveSummary={liveSummary}
                   activeTab={activeRightTab}
                   aiProvider={aiProvider}
+                  isLoadingHistory={Boolean(selectedNote && chatMessagesByNote[selectedNote.id] === undefined)}
                   onTabChange={setActiveRightTab}
                   onAIProviderChange={handleAIProviderChange}
                   onSubmitPrompt={handleAssistantPrompt}

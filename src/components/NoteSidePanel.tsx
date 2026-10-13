@@ -22,6 +22,7 @@ interface NoteSidePanelProps {
   onFileUpload: (files: FileList | null) => void;
   onAddLink: () => void;
   onRemoveUpload: (id: string | number) => Promise<void> | void;
+  isLoadingHistory?: boolean;
   // Annotation system additions
   selectedNoteId: string | number;
   annotations: Annotation[];
@@ -84,6 +85,7 @@ export function NoteSidePanel({
   onAskAI,
   onCopyText,
   onSearchGoogle,
+  isLoadingHistory,
 }: NoteSidePanelProps) {
   const { t } = useI18n();
 
@@ -319,6 +321,7 @@ export function NoteSidePanel({
               aiProvider={aiProvider}
               onAIProviderChange={onAIProviderChange}
               onSubmitPrompt={onSubmitPrompt}
+              isLoadingHistory={isLoadingHistory}
             />
           </div>
         ) : null}
