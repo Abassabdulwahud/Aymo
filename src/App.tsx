@@ -2015,9 +2015,6 @@ export default function App() {
           <span>{trashedNoteCount > 0 ? `(${trashedNoteCount})` : ""}</span>
         </button>
 
-        <div className="sidebar-health-footer">
-          <WorkspaceHealthPanel isLocalSession={!isAuthenticated} />
-        </div>
       </aside>
 
       <section className="home-main">
